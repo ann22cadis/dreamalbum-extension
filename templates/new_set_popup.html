@@ -1,0 +1,32 @@
+<div class="DA-sub-panel" id="DA-style-editor-panel">
+    <div class="DA-sub-header">
+        <span class="DA-sub-title"><i class="fa-solid fa-pen-to-square"></i> Редактор стиля</span>
+        <button class="DA-icon-btn" id="DA-style-editor-close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="DA-sub-content" style="display:flex; flex-direction:column; gap:14px;">
+
+        <!-- Превью + Название в одну строку -->
+        <div style="display:flex; gap:12px; align-items:center;">
+            <div id="DA-style-editor-img-preview" style="width:68px; height:68px; flex-shrink:0; border-radius:8px; border:1px dashed var(--da-border-light); background:var(--da-surface2); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; cursor:pointer;">
+                <i class="fa-solid fa-image" style="color:var(--da-text-muted); opacity:0.5;"></i>
+            </div>
+            <div style="flex:1;">
+                <input type="file" id="DA-style-editor-img-upload" accept="image/*" style="display:none;">
+                <input id="DA-style-editor-name" class="DA-input" type="text" placeholder="Название стиля..." autocomplete="off" style="width:100%;">
+            </div>
+        </div>
+
+        <!-- Промпт -->
+        <div style="display:flex; flex-direction:column; gap:6px; flex:1; min-height:0;">
+            <label class="DA-label">Промпт стиля (Системная инструкция)</label>
+            <textarea id="DA-style-editor-prompt" class="DA-input"
+                placeholder="Инструкции для ИИ..."
+                style="flex:1; min-height:120px; resize:none; font-family:monospace; font-size:0.75rem; line-height:1.45;"></textarea>
+        </div>
+
+        <!-- Кнопка сохранить -->
+        <button id="DA-style-editor-save" class="DA-footer-btn DA-btn-primary" style="flex:none; width:100%; height:44px; font-weight:600; font-size:0.9rem;">
+            Сохранить стиль
+        </button>
+    </div>
+</div>

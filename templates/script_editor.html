@@ -1,0 +1,152 @@
+<div id="DreamAlbum-scripteditor-template">
+    <div class="DreamAlbum-scripteditor">
+        <h3 class="DreamAlbum-scripteditor-header flex-container justifyCenter alignItemsBaseline">
+            <strong>Script Block Editor</strong>
+        </h3>
+
+        <hr>
+
+        <div class="DreamAlbum-scripteditor-body flex-container flexFlowRow">
+            <div class="DreamAlbum-scripteditor-settings flex-container flexFlowColumn">
+                <h4 class="flex-container justifyCenter alignItemsBaseline">
+                    <strong>Script Settings</strong>
+                </h4>
+                <div class="flex-container flexFlowColumn">
+                    <div class="flex1">
+                        <label for="DreamAlbum-scripteditor-block-name" class="title_restorable">
+                            <small>Block Name</small>
+                        </label>
+                        <div>
+                            <input
+                                class="DreamAlbum-scripteditor-block-name text_pole textarea_compact"
+                                placeholder="Exact name without angle brackets."
+                                type="text" />
+                        </div>
+                    </div>
+
+                    <div class="flex1 flex-container flexNoGap">
+                        <small title="">
+                            <span>Script Type</span>
+                            <span class="fa-solid fa-circle-question note-link-span"></span>
+                        </small>
+                        <select name="DreamAlbum-scripteditor-script-type" class="text_pole">
+                            <option value="stscript">STscript</option>
+                            <option value="js">JS</option>
+                        </select>
+                    </div>
+
+                    <div class="flex1">
+                        <label for="DreamAlbum-scripteditor-script" class="title_restorable">
+                            <small>Script</small>
+                        </label>
+                        <div class="DreamAlbum-editor-message-holder">
+                            <pre class="DreamAlbum-editor-message-syntax"><code class="DreamAlbum-editor-message-syntax-inner hljs"></code></pre>
+                            <textarea
+                                class="DreamAlbum-scripteditor-script text_pole wide100p textarea_compact"
+                                placeholder="Placeholder for the script."
+                                rows="30"
+                                spellcheck="false"
+                            ></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr>
+
+            <div class="DreamAlbum-scripteditor-states flex-container flexFlowColumn">
+                <h4 class="flex-container justifyCenter alignItemsBaseline">
+                    <strong>Script States</strong>
+                </h4>
+
+                <div class="flex1 wi-enter-footer-text flex-container flexFlowColumn flexNoGap alignitemsstart">
+                    <small>Triggers</small>
+                    <div title="Messages sent by the user and swipes.">
+                        <label class="checkbox flex-container">
+                            <input type="checkbox" name="user_message">
+                            <span>User Message</span>
+                        </label>
+                    </div>
+
+                    <div title="Messages received from the Generation API.">
+                        <label class="checkbox flex-container">
+                            <input type="checkbox" name="char_message">
+                            <span>Char Message</span>
+                        </label>
+                    </div>
+
+                    <div title="Stops generation when a keyword is found.">
+                        <label class="checkbox flex-container">
+                            <input type="checkbox" name="generation_pause">
+                            <span>Generation Pause</span>
+                        </label>
+                    </div>
+ 
+                    <div class="flex-container wide100p marginTop5">
+                        <div class="flex1 flex-container flexNoGap">
+                            <small title="">
+                                <span>Trigger periodicity</span>
+                                <span class="fa-solid fa-circle-question note-link-span"></span>
+                            </small>
+                            <select name="DreamAlbum-scripteditor-trigger-periodicity" class="text_pole">
+                                <option value="periodic">Periodic</option>
+                                <option value="keyword">Keyword-based</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="DreamAlbum-scripteditor-period-wrapper flex-container wide100p marginTop5">
+                        <div class="flex1 flex-container flexNoGap">
+                            <small title="">
+                                <span>Period</span>
+                                <span class="fa-solid fa-circle-question note-link-span"></span>
+                            </small>
+                            <input name="period" class="text_pole textarea_compact" type="number" min="0" max="999" placeholder="2" />
+                        </div>
+                    </div>
+
+                    <div class="DreamAlbum-scripteditor-keyword-wrapper flex-container wide100p marginTop5">
+                        <div class="flex1 flex-container flexNoGap">
+                            <div class="flex-container" style="align-items: baseline; justify-content: space-between;">
+                                <small title="">
+                                    <span>Keyword</span>
+                                    <span class="fa-solid fa-circle-question note-link-span"></span>
+                                </small>
+                                <div title="The keyword will be treated as a regular expression.">
+                                    <label class="checkbox flex-container">
+                                        <input type="checkbox" name="keyword_is_regex" />
+                                        <span>Regex</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <input
+                            name="keyword"
+                            class="DreamAlbum-scripteditor-keyword text_pole textarea_compact"
+                            type="text" />
+                        </div>
+                    </div>
+
+                    <small>State</small>
+
+                    <label class="checkbox flex-container">
+                        <input type="checkbox" name="disabled" />
+                        <span>Disabled</span>
+                    </label>
+
+                    <div class="flex-container wide100p marginTop5" id="DreamAlbum-editor-execution-order-wrapper">
+                        <div class="flex1 flex-container flexNoGap">
+                            <small title="">
+                                <span>Execution Order</span>
+                                <span class="fa-solid fa-circle-question note-link-span"></span>
+                            </small>
+                            <select name="DreamAlbum-editor-execution-order" class="text_pole">
+                                <option value="before">Before blocks</option>
+                                <option value="after">After blocks</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

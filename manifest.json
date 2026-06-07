@@ -1,0 +1,12 @@
+{
+    "display_name": "DreamAlbum",
+    "loading_order": 101,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "styles.css",
+    "author": "ann22cadis",
+    "version": "1.0.1",
+    "homePage": "https://github.com/ann22cadis/dreamalbum-extension",
+    "auto_update": true
+}

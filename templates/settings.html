@@ -1,0 +1,172 @@
+<div class="dreamalbum_settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>DreamAlbum</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+
+
+        <div class="inline-drawer-content">
+			<label class="flex-container">
+				<input type="checkbox" id="dreamalbum_is_enabled"><span>Enable DreamAlbum</span>
+			</label>
+
+            <div class="DreamAlbum-preset">
+                <strong for="DreamAlbum-preset-actions">
+                    DreamAlbum Preset:
+                </strong>
+                <div class="DreamAlbum-preset-actions">
+                    <select id="DreamAlbum-preset-list" class="text_pole"></select>
+                    <div class="DreamAlbum-preset-add menu_button menu_button_icon fa-solid fa-plus" id="DreamAlbum-preset-new" title="Create new DreamAlbum set"></div>
+                    <div class="DreamAlbum-preset-add menu_button menu_button_icon fa-solid fa-file-import" id="DreamAlbum-preset-import" title="Import DreamAlbum set"></div>
+                    <input type="file" id="DreamAlbum-preset-importFile" accept=".json" hidden>
+                    <div class="DreamAlbum-preset-add menu_button menu_button_icon fa-solid fa-file-export" id="DreamAlbum-preset-export" title="Export DreamAlbum set"></div>
+                    <div class="DreamAlbum-preset-del menu_button menu_button_icon fa-solid fa-trash redWarningBG" id="DreamAlbum-preset-delete" title="Delete DreamAlbum set"></div>
+                </div>
+            </div>
+
+            <div id="DreamAlbum-proxy-toggle" class="menu_button menu_button_icon" title="Proxy settings, temperature, system prompt, etc.">
+                <i class="fa-solid fa-cog"></i>
+                <span>API Settings</span>
+            </div>
+
+            <div id="DreamAlbum-proxy" style="display:none;">
+                <div class="flex-container flexFlowColumn">
+                    <label for="DreamAlbum-api-preset">
+                        API Preset:
+                    </label>
+                    <select id="DreamAlbum-api-preset" class="text_pole">
+                        <option value="big">Big</option>
+                        <option value="medium">Medium</option>
+                        <option value="small">Small</option>
+                    </select>
+                </div>
+
+                <div class="flex-container flexFlowColumn">
+                    <label for="DreamAlbum-proxy-connection-profile">
+                        Connection Profile:
+                    </label>
+                    <div class="flex-container">
+                        <select id="DreamAlbum-proxy-connection-profile" class="text_pole"></select>
+                        <div id="DreamAlbum-proxy-connection-profile-refresh" class="menu_button menu_button_icon fa-solid fa-arrows-rotate" title="Refresh connection profiles list"></div>
+                    </div>
+                </div>
+
+                <hr>
+
+                <div class="flex-container flexFlowColumn">
+                    <label for="DreamAlbum-proxy-temperature">
+                        Temperature:
+                    </label>
+                    <input id="DreamAlbum-proxy-temperature" class="text_pole" type="number" min="0" max="2.0" step="0.01">
+                </div>
+
+                <div class="flex-container flexFlowColumn">
+                    <label for="DreamAlbum-proxy-topp">
+                        Top P:
+                    </label>
+                    <input id="DreamAlbum-proxy-topp" class="text_pole" type="number" min="0" max="1.0" step="0.01">
+                </div>
+
+                <div class="flex-container flexFlowColumn">
+                    <label for="DreamAlbum-proxy-maxtokens">
+                        Max Tokens:
+                    </label>
+                    <input id="DreamAlbum-proxy-maxtokens" class="text_pole" type="number" min="0" step="1">
+                </div>
+
+                <div class="flex-container flexFlowColumn">
+                    <label for="DreamAlbum-proxy-contextsize">
+                        Chat Context (10-100 messages):
+                    </label>
+                    <div class="flex-container flexGap10">
+                        <input id="DreamAlbum-proxy-contextsize" type="range" min="10" max="100" step="1" class="text_pole" style="flex: 1;">
+                        <span id="DreamAlbum-proxy-contextsize-val" style="min-width: 30px; text-align: right;">10</span>
+                    </div>
+                </div>
+
+                <div class="flex-container flexFlowColumn">
+                    <label for="DreamAlbum-proxy-reasoningeffort">
+                        Reasoning Effort:
+                    </label>
+                    <select id="DreamAlbum-proxy-reasoningeffort" class="text_pole">
+                        <option value="auto">Auto</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="min">Min</option>
+                        <option value="max">Max</option>
+                    </select>
+                </div>
+
+                <hr>
+
+                <label class="flex-container">
+                    <input type="checkbox" id="DreamAlbum-enable-jb"><span>Enable confirmation JB</span>
+                </label>
+
+                <hr>
+            
+            </div>
+
+            <hr>
+
+            <div id="DreamAlbum-blocks-global">
+                <div>
+                    <strong>Preset blocks:</strong>
+                </div>
+                <div class="flex-container">
+                    <div id="DreamAlbum-blocks-global-openeditor" class="menu_button menu_button_icon" title="New generated block">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <small>+ G-Block</small>
+                    </div>
+                    <div id="DreamAlbum-blocks-global-openaccumulationeditor" class="menu_button menu_button_icon" title="New accumulation block">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <small>+ A-Block</small>
+                    </div>
+                    <div id="DreamAlbum-blocks-global-openscripteditor" class="menu_button menu_button_icon" title="New script block">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <small>+ S-Block</small>
+                    </div>
+                    <div id="DreamAlbum-blocks-global-import" class="menu_button menu_button_icon">
+                        <i class="fa-solid fa-file-import"></i>
+                        <small>Import</small>
+                    </div>
+                    <input type="file" id="DreamAlbum-blocks-global-import-file" hidden accept="*.json" multiple />
+                </div>
+
+                <div id="DreamAlbum-blocks-global-list" class="flex-container DreamAlbum-blocks-container flexFlowColumn"></div>
+            </div>
+
+            <hr>
+
+            <div id="DreamAlbum-blocks-scoped">
+                <div>
+                    <strong title="Blocks embedded in the сurrent card.">Embedded blocks:</strong>
+                </div>
+                <div class="flex-container">
+                    <div id="DreamAlbum-blocks-scoped-openeditor" class="menu_button menu_button_icon" title="New generated block">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <small>+ G-Block</small>
+                    </div>
+                    <div id="DreamAlbum-blocks-scoped-openaccumulationeditor" class="menu_button menu_button_icon" title="New accumulation block">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <small>+ A-Block</small>
+                    </div>
+                    <div id="DreamAlbum-blocks-scoped-openscripteditor" class="menu_button menu_button_icon" title="New script block">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <small>+ S-Block</small>
+                    </div>
+                    <div id="DreamAlbum-blocks-scoped-import" class="menu_button menu_button_icon">
+                        <i class="fa-solid fa-file-import"></i>
+                        <small>Import</small>
+                    </div>
+                    <input type="file" id="DreamAlbum-blocks-scoped-import-file" hidden accept="*.json" multiple />
+                </div>
+
+                <div id="DreamAlbum-blocks-scoped-list" class="flex-container DreamAlbum-blocks-container flexFlowColumn"></div>
+            </div>
+
+        </div>
+    </div>
+</div>

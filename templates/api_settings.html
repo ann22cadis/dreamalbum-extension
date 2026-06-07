@@ -1,0 +1,99 @@
+<div class="DA-sub-panel" id="DA-api-settings-panel">
+    <div class="DA-sub-header">
+        <span class="DA-sub-title"><i class="fa-solid fa-gear"></i> Настройки API</span>
+        <button class="DA-icon-btn" id="DA-api-settings-close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="DA-sub-content">
+        <div class="DA-settings-grid" style="display: flex; flex-direction: column; gap: 16px;">
+            <div class="DA-settings-section">
+                <label class="DA-label" title="Выберите один из ваших профилей подключения SillyTavern.">Профиль подключения SillyTavern</label>
+                <div class="DA-row">
+                    <select id="DA-proxy-list" class="DA-select">
+                        <option value="">-- Загрузка... --</option>
+                    </select>
+                    <button id="DA-proxy-refresh" class="DA-icon-btn-sm" title="Обновить список профилей"><i class="fa-solid fa-arrows-rotate"></i></button>
+                </div>
+            </div>
+
+            <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--da-text-muted); opacity: 0.7; border-bottom: 1px solid var(--da-border); padding-bottom: 4px; text-align: center;">Параметры</div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div class="DA-settings-section">
+                    <label class="DA-label">Temperature</label>
+                    <input id="DA-temperature" class="DA-input" type="number" step="0.01" placeholder="0.2">
+                </div>
+                <div class="DA-settings-section">
+                    <label class="DA-label">Top P</label>
+                    <input id="DA-topp" class="DA-input" type="number" step="0.01" placeholder="1.0">
+                </div>
+            </div>
+
+            <div class="DA-settings-section">
+                <label class="DA-label" title="Сколько последних сообщений чата будут отправлены ИИ для понимания контекста.">Контекст чата (10-100 сообщений)</label>
+                <div style="display: flex; align-items: center; gap: 12px; background: var(--da-surface2); padding: 8px 12px; border-radius: 8px; border: 1px solid var(--da-border);">
+                    <input id="DA-context-size" type="range" min="10" max="100" step="1" class="DA-range" style="flex: 1;" title="Размер контекста">
+                    <span id="DA-context-size-val" style="min-width: 32px; font-weight: 600; font-size: 0.9rem; text-align: right; color: var(--da-accent);">10</span>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div class="DA-settings-section">
+                    <label class="DA-label">Max Tokens</label>
+                    <input id="DA-maxtokens" class="DA-input" type="number" placeholder="4096">
+                </div>
+                <div class="DA-settings-section">
+                    <label class="DA-label">Reasoning</label>
+                    <select id="DA-reasoningeffort" class="DA-select">
+                        <option value="auto">Auto</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; background: var(--da-surface2); padding: 10px; border-radius: 6px;">
+                <span class="DA-label" style="opacity: 0.7;">Настройки активны для всех генераций альбома</span>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px; background: var(--da-surface2); padding: 10px; border-radius: 6px;">
+                <label class="DA-toggle-label" style="display: flex; align-items: center; gap: 8px;">
+                    <input id="DA-include-char-card" type="checkbox" class="DA-checkbox">
+                    <span>Включать контекст карты персонажа</span>
+                </label>
+                <label class="DA-toggle-label" style="display: flex; align-items: center; gap: 8px;">
+                    <input id="DA-include-lorebooks" type="checkbox" class="DA-checkbox">
+                    <span>Включать контекст лорбуков (World Info)</span>
+                </label>
+                <label class="DA-toggle-label" style="display: flex; align-items: center; gap: 8px;">
+                    <input id="DA-include-persona" type="checkbox" class="DA-checkbox">
+                    <span>Включать описание персоны пользователя</span>
+                </label>
+                <label class="DA-toggle-label" style="display: flex; align-items: center; gap: 8px;">
+                    <input id="DA-include-previous-blocks" type="checkbox" class="DA-checkbox">
+                    <span>Включать текст старых внешних блоков из истории чата</span>
+                </label>
+            </div>
+
+            <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--da-text-muted); opacity: 0.7; border-bottom: 1px solid var(--da-border); padding-bottom: 4px; text-align: center;">Плавающие кнопки</div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px; background: var(--da-surface2); padding: 10px; border-radius: 6px;">
+                <div id="DA-floating-styles-container" style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
+                    <label class="DA-label">Выберите до 3 стилей:</label>
+                    <select id="DA-floating-style-1" class="DA-select"><option value="">-- Нет --</option></select>
+                    <select id="DA-floating-style-2" class="DA-select"><option value="">-- Нет --</option></select>
+                    <select id="DA-floating-style-3" class="DA-select"><option value="">-- Нет --</option></select>
+                </div>
+            </div>
+
+            <div class="DA-row" style="margin-top: 8px;">
+                <button id="DA-test-connection" class="DA-footer-btn DA-btn-secondary" style="flex: 1; height: 46px; font-weight: 600;">
+                    <i class="fa-solid fa-plug-circle-check"></i> Проверить
+                </button>
+                <button id="DA-api-settings-save" class="DA-footer-btn DA-btn-primary" style="flex: 1; height: 46px; font-weight: 600;">
+                    Сохранить настройки
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
