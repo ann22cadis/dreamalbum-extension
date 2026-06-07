@@ -68,33 +68,45 @@ export const AlbumUI = {
      _scanChatImages() {
         const images = [];
         const hidden = extStates.DreamAlbum_settings.hidden_items || [];
-        // Simple deterministic hash for a string (djb2-style)
-        const hashStr = (s) => {
-            let h = 5381;
-            for (let i = 0; i < s.length; i++) h = (h * 33) ^ s.charCodeAt(i);
-            return (h >>> 0).toString(36);
-        };
-        $('#chat .mes').each(function () {
-            const mesId = $(this).attr('mesid') ?? '';
-            $(this).find('img[data-iig-instruction]').each(function (idx) {
-                const src = $(this).attr('src') ?? '';
+        const chat = SillyTavern.getContext().chat || [];
+        
+        chat.forEach((message, mesId) => {
+            const contentToScan = (message.mes || '') + '\n' + (message.extra?.extblocks || '');
+            // Match all img tags that have data-iig-instruction attribute
+            const imgRegex = /<img[^>]+data-iig-instruction=(['"])(.*?)\1[^>]*>/gi;
+            
+            let match;
+            let idx = 0;
+            while ((match = imgRegex.exec(contentToScan)) !== null) {
+                // Also extract src
+                const srcMatch = match[0].match(/src=(['"])(.*?)\1/i);
+                const src = srcMatch ? srcMatch[2] : '';
                 
-                if (!src || src === '[IMG:GEN]') return;
+                if (!src || src === '[IMG:GEN]') {
+                    idx++;
+                    continue;
+                }
                 
                 const hideKey = `${mesId}-${idx}`;
-                if (hidden.includes(hideKey)) return;
+                if (hidden.includes(hideKey)) {
+                    idx++;
+                    continue;
+                }
                 
                 let instruction = null;
-                const raw = $(this).attr('data-iig-instruction');
-                if (raw) {
+                const raw = match[2];
+                // Try to unescape HTML entities if any (like &quot;)
+                const unescapedRaw = raw.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                
+                if (unescapedRaw) {
                     try {
-                        instruction = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        instruction = JSON.parse(unescapedRaw);
                     } catch(e) {
                         try {
-                            instruction = JSON.parse(raw.replace(/\n/g, '\\n').replace(/\r/g, ''));
+                            instruction = JSON.parse(unescapedRaw.replace(/\n/g, '\\n').replace(/\r/g, ''));
                         } catch(e2) {
-                            const promptMatch = raw.match(/"prompt"\s*:\s*"(.*?)"/s);
-                            const blockMatch = raw.match(/"block"\s*:\s*"(.*?)"/s);
+                            const promptMatch = unescapedRaw.match(/"prompt"\s*:\s*"(.*?)"/s);
+                            const blockMatch = unescapedRaw.match(/"block"\s*:\s*"(.*?)"/s);
                             if (promptMatch) {
                                 instruction = { prompt: promptMatch[1], block: blockMatch ? blockMatch[1] : 'unknown' };
                             }
@@ -103,7 +115,8 @@ export const AlbumUI = {
                 }
                 
                 images.push({ src, instruction, mesId, hideKey });
-            });
+                idx++;
+            }
         });
         return images;
     },
@@ -394,15 +407,24 @@ export const AlbumUI = {
     _openHiddenPanel() {
         const $panel = $('#DreamAlbum-panel');
         $panel.find('#DA-hidden-panel').remove();
-        
+
         const allImages = [];
-        $('#chat .mes').each(function () {
-            const mesId = $(this).attr('mesid') ?? '';
-            $(this).find('img[data-iig-instruction]').each(function (idx) {
-                const src = $(this).attr('src') ?? '';
+        const chat = SillyTavern.getContext().chat || [];
+
+        chat.forEach((message, mesId) => {
+            const contentToScan = (message.mes || '') + '\n' + (message.extra?.extblocks || '');
+            const imgRegex = /<img[^>]+data-iig-instruction=(['"])(.*?)\1[^>]*>/gi;
+
+            let match;
+            let idx = 0;
+            while ((match = imgRegex.exec(contentToScan)) !== null) {
+                const srcMatch = match[0].match(/src=(['"])(.*?)\1/i);
+                const src = srcMatch ? srcMatch[2] : '';
+
                 const hideKey = `${mesId}-${idx}`;
                 allImages.push({ src, hideKey });
-            });
+                idx++;
+            }
         });
         const hiddenKeys = extStates.DreamAlbum_settings.hidden_items || [];
         const hiddenImages = allImages.filter(img => hiddenKeys.includes(img.hideKey));
@@ -447,30 +469,46 @@ export const AlbumUI = {
         const $panel = $('#DreamAlbum-panel');
         $panel.find('#DA-image-viewer-panel').remove();
         
-        const [mesId, idx] = hideKey.split('-');
-        
+        const [mesIdStr, idxStr] = hideKey.split('-');
+        const mesId = parseInt(mesIdStr, 10);
+        const targetIdx = parseInt(idxStr, 10);
         
         let prompt = '';
-        const $imgEl = $(`#chat .mes[mesid="${mesId}"] img[data-iig-instruction]`).eq(idx);
-        if ($imgEl.length) {
-            const raw = $imgEl.attr('data-iig-instruction');
-            if (raw) {
-                try {
-                    const instruction = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                    prompt = instruction?.prompt ?? '';
-                } catch(e) {
-                    try {
-                        const instruction = JSON.parse(raw.replace(/\n/g, '\\n').replace(/\r/g, ''));
-                        prompt = instruction?.prompt ?? '';
-                    } catch(e2) {
-                        const promptMatch = raw.match(/"prompt"\s*:\s*"(.*?)"/s);
-                        if (promptMatch) {
-                            prompt = promptMatch[1];
+        const chat = SillyTavern.getContext().chat || [];
+        const message = chat[mesId];
+        
+        if (message) {
+            const contentToScan = (message.mes || '') + '\n' + (message.extra?.extblocks || '');
+            const imgRegex = /<img[^>]+data-iig-instruction=(['"])(.*?)\1[^>]*>/gi;
+            
+            let match;
+            let currentIdx = 0;
+            while ((match = imgRegex.exec(contentToScan)) !== null) {
+                if (currentIdx === targetIdx) {
+                    const raw = match[2];
+                    const unescapedRaw = raw.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                    if (unescapedRaw) {
+                        try {
+                            const instruction = JSON.parse(unescapedRaw);
+                            prompt = instruction?.prompt ?? '';
+                        } catch(e) {
+                            try {
+                                const instruction = JSON.parse(unescapedRaw.replace(/\n/g, '\\n').replace(/\r/g, ''));
+                                prompt = instruction?.prompt ?? '';
+                            } catch(e2) {
+                                const promptMatch = unescapedRaw.match(/"prompt"\s*:\s*"(.*?)"/s);
+                                if (promptMatch) {
+                                    prompt = promptMatch[1];
+                                }
+                            }
                         }
                     }
+                    break;
                 }
+                currentIdx++;
             }
         }
+        
         const $viewer = $(`
             <div id="DA-image-viewer-panel" class="DA-sub-panel">
                 <div class="DA-sub-header">
