@@ -156,10 +156,10 @@ export const GenerationService = {
     /**
      * Triggers generation based on a specific style (set).
      */
-    async triggerStyleGeneration(set) {
+    async triggerStyleGeneration(set, additionalPrompt = null) {
         const { getContext } = SillyTavern;
         const ctx = getContext();
-        const { chat, eventSource, substituteParams } = ctx;
+        const { chat, eventSource, event_types, substituteParams } = ctx;
         
         const apiPresetName = set.api_preset || 'big';
         const preset = ApiService.getApiPreset(apiPresetName);
@@ -171,7 +171,19 @@ export const GenerationService = {
         
         let systemContent = '';
         if (preset.include_char_card) {
-            systemContent += substituteParams("{{description}}\n{{personality}}\n{{scenario}}\n\n");
+            if (ctx.groupId !== undefined) {
+                const activeGroup = ctx.groups?.find(g => g.id === ctx.groupId);
+                if (activeGroup && activeGroup.members) {
+                    activeGroup.members.forEach(charId => {
+                        const char = ctx.characters?.find(c => c.avatar === charId || c.id == charId);
+                        if (char) {
+                            systemContent += `Character (${char.name}) Description: ${char.description}\n`;
+                        }
+                    });
+                }
+            } else {
+                systemContent += substituteParams("{{description}}\n{{personality}}\n{{scenario}}\n\n");
+            }
         }
         if (preset.include_persona) {
             systemContent += substituteParams("{{persona}}\n\n");
@@ -198,11 +210,23 @@ export const GenerationService = {
             content: `GLOBAL CONTEXT:\n${systemContent}\nCHAT HISTORY:\n${lastMessages}`
         };
         fullContext.unshift(systemMessage);
+
+        if (additionalPrompt && additionalPrompt.trim() !== '') {
+            fullContext.push({
+                role: 'user',
+                content: `[User instruction: ${additionalPrompt.trim()}]`
+            });
+        }
+
         const data = await ApiService.generateBlocks(fullContext, apiPresetName);
         const text = ApiService.extractMessageFromData(data, preset);
         await BlockService.addBlocksToExtra(messageId, text);
         if (eventSource) {
             eventSource.emit(ExtTopic.BLOCKS_GENERATED_IIG, { messageId });
+            // "Пинок" для расширений генерации картинок
+            if (text.includes('<img')) {
+                eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'DreamAlbum');
+            }
         } else {
             console.warn('[DreamAlbum] eventSource is not available to emit BLOCKS_GENERATED_IIG');
         }

@@ -209,13 +209,44 @@ export const MainUI = {
         if (!$mes.length) return;
         const allBlocks = BlockService.getAllEnabledBlocks();
         const wrapElement = ($el, blockName) => {
-            const $img = $el.find('img[data-iig-instruction]').addBack('img[data-iig-instruction]');
-            const hasImage = $img.length > 0;
-            const $existingContent = $el.parent('.DA-block-content');
+            const btnPosClass = `DA-pos-${extStates.DreamAlbum_settings?.button_position || 'top-left'}`;
+
+            // If already inside a DreamAlbum block content, just update it
+            const $existingContent = $el.closest('.DA-block-content');
             if ($existingContent.length) {
                 const $wrapper = $existingContent.parent('.DA-interactive-block');
+                const $img = $el.find('[data-iig-instruction]').addBack('[data-iig-instruction]');
+                const hasImage = $img.length > 0;
+                
+                // If the new image is present and not a loading placeholder, hide the loading spinner
+                if (hasImage && !$img.attr('src')?.includes('[IMG:GEN]')) {
+                    $wrapper.find('.DA-block-loading').hide();
+                    $wrapper.find('.DA-block-content > *:not(.DA-block-loading)').show();
+                }
+
+                // Slay/IIG may reinject .iig-image-wrapper during regeneration, adding inline styles
+                const $iigWrapper = $el.closest('.iig-image-wrapper');
+                if ($iigWrapper.length) {
+                    $iigWrapper.css({
+                        'display': 'block',
+                        'margin': '0',
+                        'padding': '0',
+                        'background': 'transparent',
+                        'line-height': '0',
+                        'font-size': '0',
+                        'vertical-align': '',
+                        'float': 'none',
+                        'transform': 'none',
+                        'height': 'auto',
+                        'min-height': '0'
+                    });
+                }
+                
+                const btns = extStates.DreamAlbum_settings?.action_buttons || { fullscreen: true, copy: true, edit: true, delete: true };
+                
                 $wrapper.toggleClass('DA-img-block', hasImage);
                 $wrapper.attr('data-block-name', blockName || 'unknown');
+                $wrapper.removeClass('DA-pos-top-left DA-pos-top-right DA-pos-top-center DA-pos-bottom-left DA-pos-bottom-right DA-pos-bottom-center').addClass(btnPosClass);
                 
                 if (!$el.text().trim() && !hasImage) {
                     $existingContent.addClass('DA-is-empty');
@@ -224,63 +255,90 @@ export const MainUI = {
                 }
                 
                 const $actions = $wrapper.find('.DA-block-actions');
-                if (hasImage && $actions.find('.DA-img-fullscreen').length === 0) {
-                    $actions.prepend(`
-                        <div class="DA-img-fullscreen" title="На весь экран"><i class="fa-solid fa-expand"></i></div>
-                        <div class="DA-img-copy" title="Скопировать промпт"><i class="fa-solid fa-copy"></i></div>
-                        <div class="DA-img-edit" title="Редактировать промпт и перегенерировать"><i class="fa-solid fa-pen-to-square"></i></div>
-                    `);
-                } else if (!hasImage) {
-                    $actions.find('.DA-img-fullscreen, .DA-img-copy, .DA-img-edit').remove();
-                }
+                $actions.empty(); // Clear existing buttons
+                $actions.append(`
+                    ${(hasImage && btns.fullscreen) ? '<div class="DA-img-fullscreen" title="На весь экран"><i class="fa-solid fa-expand"></i></div>' : ''}
+                    ${(hasImage && btns.copy) ? '<div class="DA-img-copy" title="Скопировать промпт"><i class="fa-solid fa-copy"></i></div>' : ''}
+                    ${(hasImage && btns.edit) ? '<div class="DA-img-edit" title="Редактировать промпт и перегенерировать"><i class="fa-solid fa-pen-to-square"></i></div>' : ''}
+                    ${btns.delete ? '<div class="DA-block-delete" title="Удалить блок"><i class="fa-solid fa-trash-can"></i></div>' : ''}
+                `);
                 return;
             }
             
-            if ($el.find('.DA-interactive-block').length) return; // Fix double wrapping
+            // Check if we are inside another extension's wrapper (like notsosillynotsoimages)
+            const $iigWrapper = $el.closest('.iig-image-wrapper');
+            let $target = $el;
+            if ($iigWrapper.length) {
+                $target = $iigWrapper;
+                // IIG may set inline styles via JS (margin, padding, background) which beat CSS rules.
+                // Force-reset them here so no strips appear at top/bottom of the image block.
+                $iigWrapper.css({
+                    'display': 'block',
+                    'margin': '0',
+                    'padding': '0',
+                    'background': 'transparent',
+                    'line-height': '0',
+                    'font-size': '0',
+                    'vertical-align': '',
+                    'float': 'none',
+                    'transform': 'none',
+                    'height': 'auto',
+                    'min-height': '0'
+                });
+            }
+
+            const $img = $el.find('[data-iig-instruction]').addBack('[data-iig-instruction]');
+            const hasImage = $img.length > 0;
+            
+            const btns = extStates.DreamAlbum_settings?.action_buttons || { fullscreen: true, copy: true, edit: true, delete: true };
+            
             const $wrapper = $(`
-                <div class="DA-interactive-block ${hasImage ? 'DA-img-block' : ''}" data-block-name="${blockName || 'unknown'}">
+                <div class="DA-interactive-block ${btnPosClass} ${hasImage ? 'DA-img-block' : ''}" data-block-name="${blockName || 'unknown'}">
                     <div class="DA-block-content">
                         <div class="DA-block-loading" style="display: none; padding: 20px; text-align: center;">
                             <i class="fa-solid fa-spinner fa-spin"></i>
                         </div>
                     </div>
                     <div class="DA-block-actions">
-                        ${hasImage ? '<div class="DA-img-fullscreen" title="На весь экран"><i class="fa-solid fa-expand"></i></div>' : ''}
-                        ${hasImage ? '<div class="DA-img-copy" title="Скопировать промпт"><i class="fa-solid fa-copy"></i></div>' : ''}
-                        ${hasImage ? '<div class="DA-img-edit" title="Редактировать промпт и перегенерировать"><i class="fa-solid fa-pen-to-square"></i></div>' : ''}
-                        <div class="DA-block-delete" title="Удалить блок"><i class="fa-solid fa-trash-can"></i></div>
+                        ${(hasImage && btns.fullscreen) ? '<div class="DA-img-fullscreen" title="На весь экран"><i class="fa-solid fa-expand"></i></div>' : ''}
+                        ${(hasImage && btns.copy) ? '<div class="DA-img-copy" title="Скопировать промпт"><i class="fa-solid fa-copy"></i></div>' : ''}
+                        ${(hasImage && btns.edit) ? '<div class="DA-img-edit" title="Редактировать промпт и перегенерировать"><i class="fa-solid fa-pen-to-square"></i></div>' : ''}
+                        ${btns.delete ? '<div class="DA-block-delete" title="Удалить блок"><i class="fa-solid fa-trash-can"></i></div>' : ''}
                     </div>
                 </div>
             `);
-            $el.before($wrapper);
-            $wrapper.find('.DA-block-content').prepend($el);
-            
+            $target.before($wrapper);
+            $wrapper.find('.DA-block-content').append($target);
             
             if (!$el.text().trim() && !hasImage) {
                 $wrapper.find('.DA-block-content').addClass('DA-is-empty');
             } else {
                 $wrapper.find('.DA-block-content').removeClass('DA-is-empty');
             }
-            
-            if (!$el.parent('.DA-block-content').length) {
-                $wrapper.find('.DA-block-content').prepend($el);
-            }
         };
-        // 1. Find all images with SillyImages instruction
-        $mes.find('img[data-iig-instruction]').each(function() {
-            const $img = $(this);
+        // 1. Find all images with SillyImages instruction OR third-party loaders
+        $mes.find('[data-iig-instruction], .iig-loading-placeholder').each(function() {
+            const $el = $(this);
             let blockName = 'unknown';
-            try {
-                const instruction = JSON.parse($img.attr('data-iig-instruction'));
-                blockName = instruction.block || 'unknown';
-            } catch (e) {}
-            wrapElement($img, blockName);
+            
+            if ($el.is('img')) {
+                try {
+                    const instruction = JSON.parse($el.attr('data-iig-instruction'));
+                    blockName = instruction.block || 'unknown';
+                } catch (e) {}
+            } else if ($el.hasClass('iig-loading-placeholder')) {
+                // Try to find the block name from the tagId if available
+                const tagId = $el.attr('data-tag-id') || '';
+                // If it's a known SLAY placeholder, it replaces an img that was likely already wrapped or known
+            }
+            
+            wrapElement($el, blockName);
         });
         // 2. Wrap CSS/HTML block containers (images are handled above)
         $mes.find('.da-block-container').each(function() {
             const $container = $(this);
             if ($container.parent('.DA-block-content').length) return;
-            if ($container.find('img[data-iig-instruction]').length) return;
+            if ($container.find('[data-iig-instruction]').length) return;
             const blockName = $container.attr('data-da-name') || 'unknown';
             wrapElement($container, blockName);
         });

@@ -4,6 +4,7 @@ import { extStates } from '../core/state.js';
 import { ApiService } from '../services/ApiService.js';
 import { BlockService } from '../services/BlockService.js';
 import { MacroService } from '../services/MacroService.js';
+import { FloatingUI } from '../ui/FloatingUI.js';
 const { chat, eventSource, event_types, addOneMessage, saveChat } = SillyTavern.getContext();
 /**
  * Plugin for handling standard Generated blocks.
@@ -62,13 +63,13 @@ export const GeneratedPlugin = {
         if (Object.keys(groupedBlocks).length === 0) return blocksList;
         const hasForegroundBlocks = Object.values(groupedBlocks).some(group => !(group[0].background ?? false));
         if (hasForegroundBlocks) {
-            toastr.info(`${defaultExtPrefix} Generating, please wait...`);
+            // toastr.info(`${defaultExtPrefix} Generating, please wait...`);
         }
         for (const context in groupedBlocks) {
             const blocksInGroup = groupedBlocks[context];
             const isBackground = blocksInGroup[0].background ?? false;
             if (isBackground) {
-                toastr.info(`${defaultExtPrefix} Starting background generation for "${blocksInGroup.map(b => b.name).join(', ')}"...`);
+                // toastr.info(`${defaultExtPrefix} Starting background generation for "${blocksInGroup.map(b => b.name).join(', ')}"...`);
             }
             const generationTask = async () => {
                 
@@ -95,6 +96,8 @@ export const GeneratedPlugin = {
                     await BlockService.addBlocksToExtra(messageId, generatedContent);
                     if (generatedContent.includes('<img')) {
                         eventSource.emit(ExtTopic.BLOCKS_GENERATED_IIG, { messageId });
+                        // "Пинок" для расширений генерации картинок
+                        eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'DreamAlbum');
                     }
                 } else {
                     const message = {
@@ -108,14 +111,16 @@ export const GeneratedPlugin = {
                     const pushedIndex = chat.length - 1;
                     await eventSource.emit(event_types.MESSAGE_SENT, pushedIndex);
                     addOneMessage(message);
-                    await eventSource.emit(event_types.USER_MESSAGE_RENDERED, pushedIndex);
+                    await eventSource.emit(event_types.USER_MESSAGE_RENDERED, pushedIndex, 'DreamAlbum');
                     await saveChat();
                     if (generatedContent.includes('<img')) {
                         eventSource.emit(ExtTopic.BLOCKS_GENERATED_IIG, { messageId: pushedIndex });
+                        // "Пинок" для расширений генерации картинок
+                        eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, pushedIndex, 'DreamAlbum');
                     }
                 }
                 if (isBackground) {
-                    toastr.success(`${defaultExtPrefix} Background generation for "${blocksInGroup.map(b => b.name).join(', ')}" is done!`);
+                    FloatingUI.triggerSuccessAnimation();
                 }
                 
                 
@@ -129,15 +134,32 @@ export const GeneratedPlugin = {
             if (isBackground) {
                 generationTask().catch(err => {
                     console.error(`${defaultExtPrefix} Background generation failed:`, err);
-                    toastr.error(`${defaultExtPrefix} Background generation failed for "${blocksInGroup.map(b => b.name).join(', ')}".`);
+                    // toastr already shown in ApiService; hide spinner if any
+                    if ($targetContainer && $targetContainer.length > 0) {
+                        $targetContainer.find('.DA-block-loading').hide();
+                        $targetContainer.find('.DA-block-content > *:not(.DA-block-loading)').show();
+                    }
                 });
             } else {
-                const generatedContent = await generationTask();
-                blocksList.push(generatedContent);
+                try {
+                    const generatedContent = await generationTask();
+                    blocksList.push(generatedContent);
+                } catch (err) {
+                    console.error(`${defaultExtPrefix} Foreground generation failed:`, err);
+                    // toastr already shown in ApiService; hide spinner if it's still visible
+                    const blockName = blocksInGroup[0]?.name;
+                    if (blockName) {
+                        const $tc = $(`[data-block-name="${blockName}"]`);
+                        if ($tc.length > 0) {
+                            $tc.find('.DA-block-loading').hide();
+                            $tc.find('.DA-block-content > *:not(.DA-block-loading)').show();
+                        }
+                    }
+                }
             }
         }
         if (hasForegroundBlocks) {
-            toastr.success(`${defaultExtPrefix} Generating is done!`);
+            FloatingUI.triggerSuccessAnimation();
         }
         return blocksList;
     }

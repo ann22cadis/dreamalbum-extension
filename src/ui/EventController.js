@@ -60,6 +60,23 @@ export const EventController = {
         });
         eventSource.makeLast(event_types.MESSAGE_UPDATED, async (messageId) => {
             if (extensionSettings.DreamAlbum.dreamalbum_is_enabled) {
+                const $mes = $(`#chat .mes[mesid="${messageId}"]`);
+                // Проверяем, не занято ли сообщение другим расширением (SLAY/IIG)
+                const isForeignBusy = $mes.find('.iig-loading-placeholder, .iig-regen-busy, .iig-regen-active, .iig-spinner, .iig-regenerate-btn.interactable.fa-spin').length > 0;
+                
+                if (!extStates.pendingForeignGen) extStates.pendingForeignGen = new Set();
+                
+                if (isForeignBusy) {
+                    extStates.pendingForeignGen.add(messageId);
+                    console.log('[DreamAlbum] Foreign generator is busy with message', messageId, '- skipping UI update to avoid breaking spinner.');
+                    return;
+                }
+                
+                if (extStates.pendingForeignGen.has(messageId)) {
+                    extStates.pendingForeignGen.delete(messageId);
+                    FloatingUI.triggerSuccessAnimation();
+                }
+
                 await BlockService.extractBlocksFromMessage(messageId);
                 await BlockService.updateBlocksDisplay(messageId);
                 MainUI.attachBlockWrappers(messageId);
@@ -73,18 +90,30 @@ export const EventController = {
                 else BlockService.removeAllBlockInjects();
             }
         });
-        eventSource.makeFirst(event_types.USER_MESSAGE_RENDERED, async (messageId) => {
-            if (!extensionSettings.DreamAlbum.dreamalbum_is_enabled) {
+        eventSource.makeLast(event_types.USER_MESSAGE_RENDERED, async (messageId) => {
+            if (extensionSettings.DreamAlbum.dreamalbum_is_enabled) {
+                MainUI.attachBlockWrappers(messageId);
+                MainUI.addEditButtonToLastMessage();
+            }
+        });
+        eventSource.makeFirst(event_types.USER_MESSAGE_RENDERED, async (messageId, initiator) => {
+            if (!extensionSettings.DreamAlbum.dreamalbum_is_enabled || initiator === 'DreamAlbum') {
                 return;
             }
-            
             await BlockService.extractBlocksFromMessage(messageId);
             await GenerationService.handleUserTrigger(messageId);
             MainUI.attachBlockWrappers(messageId);
             MainUI.addEditButtonToLastMessage();
         });
-        eventSource.makeFirst(event_types.CHARACTER_MESSAGE_RENDERED, async (messageId) => {
-            if (!extensionSettings.DreamAlbum.dreamalbum_is_enabled) {
+
+        eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, async (messageId) => {
+            if (extensionSettings.DreamAlbum.dreamalbum_is_enabled) {
+                MainUI.attachBlockWrappers(messageId);
+                MainUI.addEditButtonToLastMessage();
+            }
+        });
+        eventSource.makeFirst(event_types.CHARACTER_MESSAGE_RENDERED, async (messageId, initiator) => {
+            if (!extensionSettings.DreamAlbum.dreamalbum_is_enabled || initiator === 'DreamAlbum') {
                 return;
             }
             extStates.cachedPauseBlocks = null;
@@ -98,16 +127,11 @@ export const EventController = {
             } else if (messageId > 0) {
                 await BlockService.extractBlocksFromMessage(messageId);
                 await GenerationService.handleCharTrigger(messageId);
-                if (messageId > 2) {
-                    await BlockService.updateBlocksDisplay(messageId - 2);
-                }
                 extStates.pauseCounter = 0;
             } else {
                 await BlockService.extractBlocksFromMessage(0);
                 await BlockService.checkBlocksInFirstMessage();
             }
-            MainUI.attachBlockWrappers(messageId);
-            MainUI.addEditButtonToLastMessage();
         });
         eventSource.makeFirst(event_types.MESSAGE_RECEIVED, async (messageId) => {
             if (!extensionSettings.DreamAlbum.dreamalbum_is_enabled || !extStates.generationPaused || !extStates.triggeredPauseBlock) {
@@ -147,11 +171,12 @@ export const EventController = {
                     await GenerationService.handleUserTrigger(messageId - 1, true);
                     await BlockService.swipeBlockExtra(messageId, current_swipe_id, false);
                 } else {
-                    await BlockService.swipeBlockExtra(messageId, current_swipe_id);
+                    await BlockService.swipeBlockExtra(messageId, current_swipe_id, false);
                 }
             } else {
-                await BlockService.checkBlocksInFirstMessage();
-                await BlockService.swipeBlockExtra(messageId, current_swipe_id);
+                // Для первого сообщения (0) делаем обновление данных ТИХО, 
+                // так как ST сама его отрисует, а CHARACTER_MESSAGE_RENDERED потом подхватит остальное.
+                await BlockService.swipeBlockExtra(messageId, current_swipe_id, false);
             }
         });
         eventSource.makeFirst(event_types.STREAM_TOKEN_RECEIVED, (text) => {
@@ -227,12 +252,11 @@ export const EventController = {
         
         eventSource.on(ExtTopic.BLOCKS_GENERATED_IIG, ({ messageId }) => {
             if (extensionSettings.DreamAlbum.dreamalbum_is_enabled) {
-                MainUI.attachBlockWrappers(messageId);
-                
-                
-                const $mes = $(`#chat .mes[mesid="${messageId}"]`);
-                $mes.find('.DA-block-loading').hide();
-                $mes.find('.DA-block-content > *:not(.DA-block-loading)').show();
+                // Просто прикрепляем обертки, если их нет. 
+                // Не прячем/не показываем контент принудительно, чтобы не мешать внешним спиннерам.
+                setTimeout(() => {
+                    MainUI.attachBlockWrappers(messageId);
+                }, 100);
             }
         });
         
@@ -242,7 +266,7 @@ export const EventController = {
             for (const mutation of mutations) {
                 for (const node of mutation.addedNodes) {
                     if (node.nodeType === Node.ELEMENT_NODE) {
-                        if ($(node).find('img[data-iig-instruction], .da-block-container').addBack('img[data-iig-instruction], .da-block-container').length > 0) {
+                        if ($(node).find('[data-iig-instruction], .da-block-container').addBack('[data-iig-instruction], .da-block-container').length > 0) {
                             shouldAttach = true;
                             break;
                         }
@@ -259,25 +283,51 @@ export const EventController = {
             chatObserver.observe(chatEl, { childList: true, subtree: true });
         }
         // Click on image → toggle action buttons visibility
+        let autoHideTimeout = null;
         $(document).on('click', '.DA-img-block .DA-block-content img', function(e) {
             e.stopPropagation();
             const $block = $(this).closest('.DA-interactive-block');
             const wasVisible = $block.hasClass('DA-actions-visible');
+            
+            // Clear existing timeout if any
+            if (autoHideTimeout) {
+                clearTimeout(autoHideTimeout);
+                autoHideTimeout = null;
+            }
+
             // Hide all other open blocks
             $('.DA-interactive-block.DA-actions-visible').not($block).removeClass('DA-actions-visible');
-            $block.toggleClass('DA-actions-visible', !wasVisible);
+            
+            const isVisible = !wasVisible;
+            $block.toggleClass('DA-actions-visible', isVisible);
+            
+            // If we just showed them, set a 15s auto-hide timer
+            if (isVisible) {
+                autoHideTimeout = setTimeout(() => {
+                    $block.removeClass('DA-actions-visible');
+                    autoHideTimeout = null;
+                }, 15000);
+            }
         });
         // Click anywhere else → hide all action panels
         $(document).on('click', function(e) {
-            if (!$(e.target).closest('.DA-interactive-block').length) {
-                $('.DA-interactive-block.DA-actions-visible').removeClass('DA-actions-visible');
+            // Если кликнули ВНУТРИ интерактивного блока, не закрываем кнопки сразу (даем сработать таймеру или другим кнопкам)
+            if ($(e.target).closest('.DA-interactive-block').length) {
+                return;
             }
+
+            // Если кликнули СНАРУЖИ - закрываем всё
+            if (autoHideTimeout) {
+                clearTimeout(autoHideTimeout);
+                autoHideTimeout = null;
+            }
+            $('.DA-interactive-block.DA-actions-visible').removeClass('DA-actions-visible');
         });
         $(document).on('click', '.DA-img-fullscreen', async function(e) {
             e.preventDefault();
             e.stopPropagation();
             const $block = $(this).closest('.DA-interactive-block');
-            const $img = $block.find('img[data-iig-instruction]');
+            const $img = $block.find('[data-iig-instruction]');
             if (!$img.length) return;
             const src = $img.attr('src');
             if (!src || src === '[IMG:GEN]') return;
@@ -288,7 +338,7 @@ export const EventController = {
             e.preventDefault();
             e.stopPropagation();
             const $block = $(this).closest('.DA-interactive-block');
-            const $img = $block.find('img[data-iig-instruction]');
+            const $img = $block.find('[data-iig-instruction]');
             if (!$img.length) return;
             const instructionRaw = $img.attr('data-iig-instruction');
             if (!instructionRaw) {
@@ -313,7 +363,7 @@ export const EventController = {
             e.stopPropagation();
             const $block = $(this).closest('.DA-interactive-block');
             
-            const $img = $block.find('img[data-iig-instruction]');
+            const $img = $block.find('[data-iig-instruction]');
             const $mes = $(this).closest('.mes');
             const messageId = parseInt($mes.attr('mesid'), 10);
             
@@ -328,9 +378,11 @@ export const EventController = {
             }
             
             let instruction;
+            let originalInstruction;
             try {
                 // First attempt standard JSON parsing
                 instruction = typeof instructionRaw === 'string' ? JSON.parse(instructionRaw) : instructionRaw;
+                originalInstruction = JSON.parse(JSON.stringify(instruction));
             } catch (e) {
                 console.warn('[DreamAlbum] Failed to parse JSON instruction:', e);
                 // Fallback: try to fix common JSON issues or extract just the prompt using regex
@@ -382,39 +434,97 @@ export const EventController = {
             instruction.prompt = newPrompt.trim();
             const newInstructionStr = JSON.stringify(instruction);
             
+            // Slay/IIG extension parses the chat text directly and expects raw double quotes `"` in the JSON.
+            // If we encode `"` to `&quot;`, Slay's JSON.parse fails and it ignores the tag.
+            // We only need to escape single quotes `&#39;` since the attribute is wrapped in single quotes `data-iig-instruction='...'`.
+            // And maybe `<` and `>` just for general HTML safety.
+            const encodeAttr = (str) => str.replace(/[&<>']/g, m => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;'
+            }[m]));
+            
             const message = chat[messageId];
             if (message && message.extra && message.extra.extblocks) {
                 
                 $block.find('.DA-block-loading').show();
                 $block.find('.DA-block-content > *:not(.DA-block-loading)').hide();
-                const replaceTarget = (content) => {
-                    if (!content) return content;
-                    const escapedInst = instructionRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    const regex = new RegExp(`<img[^>]*${escapedInst}[^>]*>`, 'i');
-                    return content.replace(regex, match => {
-                        return match.replace(instructionRaw, newInstructionStr).replace(/src=(?:'|")[^'"]*(?:'|")/, 'src="[IMG:GEN]"');
+
+                // Ищем индекс картинки среди всех картинок с data-iig-instruction в сообщении
+                const imgIndex = $mes.find('[data-iig-instruction]').index($img);
+                
+                const updateHtmlString = (htmlStr) => {
+                    if (!htmlStr) return htmlStr;
+                    
+                    let currentImgIndex = -1;
+                    const encodedNewInstruction = encodeAttr(newInstructionStr);
+                    // Use [\s\S]*? instead of .*? to match newlines if the JSON is pretty-printed
+                    const regex = /<img[^>]+data-iig-instruction=(['"])([\s\S]*?)\1[^>]*>/g;
+                    
+                    return htmlStr.replace(regex, (match, quote, encodedInstr) => {
+                        currentImgIndex++;
+                        let isMatch = false;
+                        try {
+                            const decodedAttr = encodedInstr.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+                            if (decodedAttr === instructionRaw || (originalInstruction && JSON.stringify(JSON.parse(decodedAttr)) === JSON.stringify(originalInstruction))) {
+                                isMatch = true;
+                            }
+                        } catch (e) {
+                            if (encodedInstr === encodeAttr(instructionRaw)) isMatch = true;
+                        }
+                        
+                        // Fallback logic using the exact DOM index
+                        if (!isMatch && currentImgIndex === imgIndex) {
+                             isMatch = true;
+                        }
+
+                        if (isMatch) {
+                            // Ensure we use [\s\S]*? here as well
+                            let newMatch = match.replace(/data-iig-instruction=(['"])[\s\S]*?\1/, `data-iig-instruction='${encodedNewInstruction}'`);
+                            if (newMatch.includes('src=')) {
+                                newMatch = newMatch.replace(/src=(['"])[\s\S]*?\1/, `src="[IMG:GEN]"`);
+                            } else {
+                                newMatch = newMatch.replace('<img ', `<img src="[IMG:GEN]" `);
+                            }
+                            // Also forcefully remove any display: none style that might have been saved if outerHTML was used
+                            newMatch = newMatch.replace(/style=(['"])[^'"]*display:\s*none[^'"]*\1/gi, '');
+                            return newMatch;
+                        }
+                        return match;
                     });
                 };
-                message.extra.extblocks = replaceTarget(message.extra.extblocks);
-                if (message.swipe_id !== undefined && message.swipe_info?.[message.swipe_id]?.extra) {
+
+                message.extra.extblocks = updateHtmlString(message.extra.extblocks);
+                if (message.mes) {
+                    message.mes = updateHtmlString(message.mes);
+                }
+                
+                if (message.swipe_id !== undefined && message.swipe_info?.[message.swipe_id]) {
                     const extra = message.swipe_info[message.swipe_id].extra;
-                    if (extra.extblocks) {
-                        extra.extblocks = replaceTarget(extra.extblocks);
+                    if (extra && extra.extblocks) {
+                        extra.extblocks = updateHtmlString(extra.extblocks);
+                    }
+                    if (message.swipe_info[message.swipe_id].mes) {
+                        message.swipe_info[message.swipe_id].mes = updateHtmlString(message.swipe_info[message.swipe_id].mes);
                     }
                 }
+                
                 await saveChat();
                 await BlockService.updateBlocksDisplay(messageId);
                 
-                
                 eventSource.emit(ExtTopic.BLOCKS_GENERATED_IIG, { messageId });
-                toastr.success('Промпт обновлен, запуск генерации...');
+                // Обязательные события для того, чтобы другие расширения "увидели" изменение промпта как новое сообщение:
+                eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'DreamAlbum');
+                eventSource.emit(event_types.USER_MESSAGE_RENDERED, messageId, 'DreamAlbum');
+                eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
             }
         });
         $(document).on('click', '.DA-block-delete', async function(e) {
             e.preventDefault();
             e.stopPropagation();
             const $block = $(this).closest('.DA-interactive-block');
-            const $img = $block.find('img[data-iig-instruction]');
+            const $img = $block.find('[data-iig-instruction]');
             const blockName = $block.attr('data-block-name');
             const $mes = $(this).closest('.mes');
             const messageId = parseInt($mes.attr('mesid'), 10);
@@ -444,12 +554,14 @@ export const EventController = {
             if (!confirmResult) return;
             const message = chat[messageId];
             if (message && message.extra && message.extra.extblocks) {
+                const imgIndex = $img.length ? $mes.find('[data-iig-instruction]').index($img) : -1;
+
                 const removeMatch = (content) => {
                     if (!content) return '';
                     
                     let blockIndex = -1;
                     
-                    if (blockName && blockName !== 'unknown') {
+                    if (blockName && blockName !== 'unknown' && blockName.toLowerCase() !== 'img') {
                         const allBlocksOfThisName = $mes.find(`.DA-interactive-block[data-block-name="${blockName}"]`);
                         blockIndex = allBlocksOfThisName.index($block);
                         
@@ -476,28 +588,51 @@ export const EventController = {
                         }
                     }
 
-                    // Fallback: If it's an image block that somehow didn't match the regex (e.g. raw IMG tag), 
-                    // try to match the exact data-iig-instruction string
-                    const instructionRaw = $img.length ? $img.attr('data-iig-instruction') : '';
-                    if (instructionRaw) {
-                        const escapedInst = instructionRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                        const imgRegex = new RegExp(`<img[^>]*${escapedInst}[^>]*>`, 'i');
-                        if (imgRegex.test(content)) {
-                             console.log('[DreamAlbum] Block matched by IMG tag instruction and removed');
-                             return content.replace(imgRegex, '').trim();
+                    // Fallback: If it's an image block that somehow didn't match the regex (e.g. raw IMG tag),
+                    // remove it robustly via jQuery by its global index among such images in the message
+                    if (imgIndex > -1) {
+                        const $temp = $('<div>').html(content);
+                        const $targetImg = $temp.find('[data-iig-instruction]').eq(imgIndex);
+                        if ($targetImg.length) {
+                            $targetImg.remove();
+                            console.log('[DreamAlbum] Block matched by IMG index and removed');
+                            
+                            // Cleanup empty wrappers if any
+                            $temp.find('DreamAlbum, dreamalbum').each(function() {
+                                if (!$(this).html().trim()) {
+                                    $(this).remove();
+                                }
+                            });
+                            
+                            return $temp.html().trim();
                         }
                     }
 
                     console.warn('[DreamAlbum] Block deletion fallback failed to match content.');
                     return content;
                 };
+                
                 message.extra.extblocks = removeMatch(message.extra.extblocks);
-                if (message.swipe_id !== undefined && message.swipe_info?.[message.swipe_id]?.extra) {
+                if (message.mes) {
+                    message.mes = removeMatch(message.mes);
+                }
+                
+                if (message.swipe_id !== undefined && message.swipe_info?.[message.swipe_id]) {
                     const extra = message.swipe_info[message.swipe_id].extra;
-                    extra.extblocks = removeMatch(extra.extblocks);
+                    if (extra && extra.extblocks) {
+                        extra.extblocks = removeMatch(extra.extblocks);
+                    }
+                    if (message.swipe_info[message.swipe_id].mes) {
+                        message.swipe_info[message.swipe_id].mes = removeMatch(message.swipe_info[message.swipe_id].mes);
+                    }
                 }
                 await saveChat();
                 await BlockService.updateBlocksDisplay(messageId);
+                
+                $block.fadeOut(200, function() {
+                    $(this).remove();
+                });
+                
                 toastr.success('Блок удален.');
             }
         });

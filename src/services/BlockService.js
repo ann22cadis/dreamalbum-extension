@@ -287,7 +287,7 @@ export const BlockService = {
      * Mirrors the reference ext-blocks-custom-master implementation:
      * filters by getAllBlocks() order and hide_display flag, does NOT use rerenderMessage.
      */
-    async updateBlocksDisplay(messageId) {
+    async updateBlocksDisplay(messageId, rerender = true) {
         const message = chat[messageId];
         if (!message) return;
 
@@ -321,11 +321,134 @@ export const BlockService = {
             } else {
                 console.log(`[DreamAlbum] Prepared ${blocksToDisplay.length} blocks for display in message ${messageId}`);
             }
-            message.extra.display_text = message.mes + `\n${blocksToDisplay.join('\n')}`;
+            const latestMes = chat[messageId]?.mes || message.mes;
+            const newDisplayText = latestMes + `\n${blocksToDisplay.join('\n')}`;
+            
+            if (message.extra.display_text === newDisplayText) {
+                console.log(`[DreamAlbum] Content for message ${messageId} unchanged, skipping render.`);
+                return;
+            }
+            
+            message.extra.display_text = newDisplayText;
         }
 
-        // Trigger rerenderMessage to ensure the new blocks appear in the chat UI
-        updateMessageBlock(messageId, message, { rerenderMessage: true });
+        // Trigger rerenderMessage only if requested
+        if (rerender) {
+            // Но только если сообщение сейчас не находится в процессе генерации другим расширением
+            const $mes = $(`#chat .mes[mesid="${messageId}"]`);
+            const isForeignBusy = $mes.find('.iig-loading-placeholder, .iig-regen-busy, .iig-regen-active, .iig-spinner, [class*="regen-busy"]').length > 0;
+            
+            if (isForeignBusy) {
+                console.log('[DreamAlbum] External generator busy, updating message data WITHOUT re-rendering UI.');
+                updateMessageBlock(messageId, message, { rerenderMessage: false });
+            } else {
+                updateMessageBlock(messageId, message, { rerenderMessage: true });
+            }
+        } else {
+            updateMessageBlock(messageId, message, { rerenderMessage: false });
+        }
+        
+        // "Умный мониторинг": следим за завершением генерации внешними расширениями
+        const pollId = `da-poll-${messageId}-${Date.now()}`;
+        if (this._activePolls === undefined) this._activePolls = new Set();
+        
+        // Предотвращаем запуск нескольких циклов для одного сообщения
+        if (this._activePolls.has(messageId)) return;
+        
+        // Не запускаем поллинг, если нет ожидающих изображений
+        const initialExtBlocks = chat[messageId]?.extra?.extblocks || '';
+        const initialPending = initialExtBlocks.includes('[IMG:GEN]') || initialExtBlocks.includes('src=""') || initialExtBlocks.includes('src="#"');
+        if (!initialPending) return;
+
+        this._activePolls.add(messageId);
+
+        let attempts = 0;
+        const maxAttempts = 60; // 2 минуты (60 * 2сек)
+        
+        const poll = async () => {
+            attempts++;
+            const currentMessage = chat[messageId];
+            
+            if (!currentMessage || !currentMessage.extra?.extblocks) {
+                this._activePolls.delete(messageId);
+                return;
+            }
+
+            const $mes = $(`#chat .mes[mesid="${messageId}"]`);
+            const isForeignBusy = $mes.find('.iig-loading-placeholder, .iig-regen-busy, .iig-regen-active, .iig-spinner, [class*="regen-busy"], .iig-regenerate-btn.interactable.fa-spin').length > 0;
+
+            let extBlocks = currentMessage.extra.extblocks;
+            let hasPending = extBlocks.includes('[IMG:GEN]') || extBlocks.includes('src=""') || extBlocks.includes('src="#"');
+            const hasError = extBlocks.includes('error.svg') || extBlocks.includes('[IMG:ERROR]');
+            const hasRealImage = extBlocks.includes('src="/') || extBlocks.includes('src="data:');
+
+            // Если картинка уже готова, или это явная ошибка, то сторонний генератор мог не успеть снять флаг isForeignBusy
+            // Но мы всё равно можем завершить
+            if (!hasPending || hasError || hasRealImage) {
+                console.log(`[DreamAlbum] Image generation naturally finished for message ${messageId}. Re-rendering.`);
+                this._activePolls.delete(messageId);
+                
+                // Анимируем кнопку (плавающую или главную в альбоме) вместо toastr-уведомления
+                if (hasRealImage) {
+                    let $btn = $('#DA-floating-container .DA-floating-btn').not('#DA-moodtube-placeholder').first();
+                    if (!$btn.length || !$btn.is(':visible')) $btn = $('#DA-create-btn');
+                    
+                    if ($btn.length) {
+                        const originalContent = $btn.html();
+                        const originalStyle = $btn.attr('style') || '';
+                        $btn.removeClass('DA-is-generating');
+                        $btn.html('<i class="fa-solid fa-check" style="font-size: 1.5rem !important; color: white !important;"></i>')
+                            .css({
+                                'background-image': 'none',
+                                'background-color': 'var(--da-accent)',
+                                'border-color': 'var(--da-accent)',
+                                'box-shadow': '0 0 15px var(--da-accent)'
+                            });
+                        setTimeout(() => {
+                            $btn.html(originalContent).attr('style', originalStyle);
+                        }, 3000);
+                    }
+                }
+                
+                await this.updateBlocksDisplay(messageId, true);
+                return;
+            }
+
+            if (isForeignBusy && attempts < maxAttempts) {
+                // Ждем, пока сторонний генератор закончит
+                setTimeout(poll, 2000);
+                return;
+            }
+
+            // Если генератор больше не занят (упал) ИЛИ истек таймаут, завершаем поллинг
+            console.log(`[DreamAlbum] Foreign generator finished/failed or timed out for message ${messageId}. Stopping polling.`);
+            this._activePolls.delete(messageId);
+
+            // Принудительно извлекаем новые блоки (вдруг DOM изменился)
+            await this.extractBlocksFromMessage(messageId);
+            extBlocks = currentMessage.extra.extblocks || '';
+            hasPending = extBlocks.includes('[IMG:GEN]') || extBlocks.includes('src=""') || extBlocks.includes('src="#"');
+
+            if (hasPending) {
+                // Если генератор упал и не обновил тег, мы должны заменить его, чтобы не было бесконечного цикла
+                // Используем base64 SVG-картинку с ошибкой, чтобы блок не становился 0x0 и его можно было удалить
+                const errSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect width="300" height="200" fill="#2b1a1a" rx="10"/><text x="150" y="90" dominant-baseline="middle" text-anchor="middle" fill="#ff6b6b" font-family="sans-serif" font-size="24" font-weight="bold">Ошибка</text><text x="150" y="125" dominant-baseline="middle" text-anchor="middle" fill="#ff6b6b" font-family="sans-serif" font-size="14">Генерация прервана</text></svg>';
+                const errImg = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(errSvg)));
+                extBlocks = extBlocks.replaceAll('[IMG:GEN]', errImg).replaceAll('src=""', `src="${errImg}"`).replaceAll('src="#"', `src="${errImg}"`);
+                currentMessage.extra.extblocks = extBlocks;
+                if (currentMessage.mes) {
+                    currentMessage.mes = currentMessage.mes.replaceAll('[IMG:GEN]', errImg).replaceAll('src=""', `src="${errImg}"`).replaceAll('src="#"', `src="${errImg}"`);
+                }
+            }
+
+            // Скрываем спиннер принудительно
+            $mes.find('.DA-block-loading').hide();
+            $mes.find('.DA-block-content > *:not(.DA-block-loading)').show();
+
+            await this.updateBlocksDisplay(messageId, true);
+        };
+        
+        setTimeout(poll, 2000);
     },
 
     /**
@@ -376,7 +499,7 @@ export const BlockService = {
                     const activeGroup = context.groups?.find(g => g.id === context.groupId);
                     if (activeGroup && activeGroup.members) {
                         activeGroup.members.forEach(charId => {
-                            const char = context.characters?.find(c => c.id == charId);
+                            const char = context.characters?.find(c => c.avatar === charId || c.id == charId);
                             if (char) {
                                 extraContext += `Character (${char.name}) Description: ${char.description}\n`;
                             }

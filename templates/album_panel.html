@@ -3,12 +3,19 @@
         <div id="DA-main-view">
             <div class="DA-header">
                 <div class="DA-header-left">
-                    <span class="DA-title">Album</span>
-                    <button id="DA-hidden-btn" class="DA-icon-btn DA-eye-small" title="Скрытые фото">
-                        <i class="fa-solid fa-eye-slash"></i>
-                    </button>
+                    <div id="DA-title-container" style="position: relative; display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: background 0.2s;" onmouseover="this.style.background='var(--da-surface2)'" onmouseout="this.style.background='transparent'">
+                        <span class="DA-title">Album</span>
+                        <!-- Theme dropdown -->
+                        <div id="DA-theme-dropdown" style="display: none; position: absolute; top: 100%; left: 0; background: var(--da-bg); border: 1px solid var(--da-border); border-radius: 8px; padding: 6px; z-index: 1000; box-shadow: var(--da-shadow); min-width: 220px; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 0.9rem; font-weight: normal; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);">
+                            <!-- Theme items injected via JS -->
+                        </div>
+                    </div>
                 </div>
                 <div class="DA-header-actions">
+                    <!-- Hidden -->
+                    <button id="DA-hidden-btn" class="DA-icon-btn" title="Скрытые фото">
+                        <i class="fa-solid fa-eye-slash"></i>
+                    </button>
                     <!-- Floating buttons toggle -->
                     <button id="DA-floating-toggle-btn" class="DA-icon-btn" title="Плавающие кнопки">
                         <i class="fa-solid fa-wand-magic-sparkles"></i>
@@ -18,7 +25,7 @@
                         <i class="fa-solid fa-power-off"></i>
                     </button>
                     <!-- API Settings -->
-                    <button id="DA-settings-btn" class="DA-icon-btn" title="Настройки API">
+                    <button id="DA-settings-btn" class="DA-icon-btn" title="Настройки">
                         <i class="fa-solid fa-gear"></i>
                     </button>
                     <!-- Close -->

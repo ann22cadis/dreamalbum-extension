@@ -1,6 +1,6 @@
 <div class="DA-sub-panel" id="DA-api-settings-panel">
     <div class="DA-sub-header">
-        <span class="DA-sub-title"><i class="fa-solid fa-gear"></i> Настройки API</span>
+        <span class="DA-sub-title"><i class="fa-solid fa-gear"></i> Настройки</span>
         <button class="DA-icon-btn" id="DA-api-settings-close"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="DA-sub-content">
@@ -83,6 +83,37 @@
                     <select id="DA-floating-style-1" class="DA-select"><option value="">-- Нет --</option></select>
                     <select id="DA-floating-style-2" class="DA-select"><option value="">-- Нет --</option></select>
                     <select id="DA-floating-style-3" class="DA-select"><option value="">-- Нет --</option></select>
+                </div>
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--da-border);">
+                    <label class="DA-toggle-label" style="display: flex; align-items: center; gap: 8px;">
+                        <input id="DA-moodtube-link" type="checkbox" class="DA-checkbox">
+                        <span>Связь с MoodTube</span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--da-text-muted); opacity: 0.7; border-bottom: 1px solid var(--da-border); padding-bottom: 4px; text-align: center;">Интерфейс</div>
+            
+            <div style="display: flex; flex-direction: column; gap: 8px; background: var(--da-surface2); padding: 10px; border-radius: 6px;">
+                <div class="DA-settings-section">
+                    <label class="DA-label" title="Позиция кнопок действий на картинках">Позиция кнопок действий</label>
+                    <select id="DA-button-position" class="DA-select">
+                        <option value="top-left">Слева сверху (по умолчанию)</option>
+                        <option value="top-center">По центру сверху</option>
+                        <option value="top-right">Справа сверху</option>
+                        <option value="bottom-left">Слева снизу</option>
+                        <option value="bottom-center">По центру снизу</option>
+                        <option value="bottom-right">Справа снизу</option>
+                    </select>
+                </div>
+                <div class="DA-settings-section" style="margin-top: 4px;">
+                    <label class="DA-label">Отображаемые кнопки</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px;">
+                        <label class="DA-toggle-label"><input id="DA-btn-show-fullscreen" type="checkbox" class="DA-checkbox"> На весь экран</label>
+                        <label class="DA-toggle-label"><input id="DA-btn-show-copy" type="checkbox" class="DA-checkbox"> Копировать</label>
+                        <label class="DA-toggle-label"><input id="DA-btn-show-edit" type="checkbox" class="DA-checkbox"> Редактировать</label>
+                        <label class="DA-toggle-label"><input id="DA-btn-show-delete" type="checkbox" class="DA-checkbox"> Удалить</label>
+                    </div>
                 </div>
             </div>
 

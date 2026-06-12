@@ -4,6 +4,7 @@ import { SettingsService } from '../services/SettingsService.js';
 import { ApiService } from '../services/ApiService.js';
 import { BlockService } from '../services/BlockService.js';
 import { GenerationService } from '../services/GenerationService.js';
+import { FloatingUI } from './FloatingUI.js';
 import { GeneratedEditor } from './editors/GeneratedEditor.js';
 import { updateOrInsert } from '../utils/dataUtils.js';
 const {
@@ -23,13 +24,61 @@ export const AlbumUI = {
         if (this._initialized) return;
         const panelHtml = await renderExtensionTemplateAsync(templates_path, ElementTemplate.ALBUM_PANEL);
         $('body').append(panelHtml);
+        this.applyTheme();
         this._setupPanelListeners();
         this._initialized = true;
+    },
+    
+    applyTheme() {
+        const themeId = extensionSettings.DreamAlbum?.album_theme || 'default';
+        let css = '';
+        if (themeId === 'tavern') {
+            // Улучшенные фоллбеки для предотвращения прозрачности
+            css = `
+                --da-bg: var(--SmartThemeBlurTintColor, var(--SmartThemeBlurColor, var(--main_background, #111)));
+                --da-surface: var(--SmartThemeBlurColor, var(--SmartThemeBlurTintColor, var(--grey30, #222)));
+                --da-surface2: var(--black30a, rgba(128, 128, 128, 0.15));
+                --da-border: var(--SmartThemeBorderColor, var(--grey60, #444));
+                --da-border-light: var(--grey30, rgba(128, 128, 128, 0.2));
+                --da-accent: var(--SmartThemeQuoteColor, var(--blue60, #8db7d5));
+                --da-accent-hover: var(--SmartThemeUserColor, var(--SmartThemeQuoteColor, #8db7d5));
+                --da-accent-dim: var(--black30a, rgba(128, 128, 128, 0.1));
+                --da-text: var(--blackWhite, var(--SmartThemeBodyColor_text, #eee));
+                --da-text-muted: var(--greyWhite, rgba(128,128,128,0.8));
+                --da-overlay: rgba(0, 0, 0, 0.6);
+            `;
+            // Дополнительная проверка на прозрачность
+            setTimeout(() => {
+                const bg = getComputedStyle(document.documentElement).getPropertyValue('--da-bg').trim();
+                const isTransparent = bg.includes('rgba') || bg.includes('hsla') || bg === 'transparent' || bg === '';
+                if (isTransparent) {
+                    $('#DA-theme-styles').append(` :root { --da-bg: #111 !important; --da-surface: #1a1a1a !important; --da-surface2: #222 !important; } `);
+                }
+            }, 100);
+        } else if (themeId === 'twilight') {
+            // New theme based on provided colors: #16131F, #F0D9E4, #C1A0AC, #4A3F4B, #806C79
+            css = `--da-bg: #16131F; --da-surface: #1f1b29; --da-surface2: #2a2536; --da-border: #4A3F4B; --da-border-light: #806C79; --da-accent: #C1A0AC; --da-accent-hover: #F0D9E4; --da-accent-dim: rgba(193, 160, 172, 0.15); --da-text: #F0D9E4; --da-text-muted: #806C79;`;
+        } else if (themeId === 'ocean') {
+            // Deep Ocean: Dark navy/teal base, muted blue text, cool accents
+            css = `--da-bg: #0a1118; --da-surface: #111d2b; --da-surface2: #1a2b3c; --da-border: #264059; --da-border-light: #385b7a; --da-accent: #8db7d5; --da-accent-hover: #afd1e9; --da-accent-dim: rgba(141, 183, 213, 0.15); --da-text: #d8e6f3; --da-text-muted: #8aacc7;`;
+        } else if (themeId === 'forest') {
+            css = `--da-bg: #0f1410; --da-surface: #131a14; --da-surface2: #18211a; --da-border: #263628; --da-border-light: #334736; --da-accent: #78a382; --da-accent-hover: #8fba99; --da-accent-dim: rgba(120, 163, 130, 0.18);`;
+        } else if (themeId === 'eclipse') {
+            // Eclipse: Very dark purple/black with silver/lavender accents (completely dark, easy on eyes)
+            css = `--da-bg: #0d0b14; --da-surface: #151120; --da-surface2: #1e192d; --da-border: #2e2642; --da-border-light: #41365c; --da-accent: #9f8bc2; --da-accent-hover: #b8a6d4; --da-accent-dim: rgba(159, 139, 194, 0.15); --da-text: #e6e2ed; --da-text-muted: #8d839e;`;
+        }
+        
+        let $style = $('#DA-theme-styles');
+        if (!$style.length) {
+            $style = $('<style id="DA-theme-styles"></style>').appendTo('head');
+        }
+        $style.text(css ? `:root { ${css} }` : '');
     },
     async open() {
         if (!this._initialized) await this.init();
         
-        $('#extensionsMenu').removeClass('displayed');
+        // Forcefully hide ST extension menu to prevent it from overlapping or staying open
+        $('#extensionsMenu').removeClass('displayed').hide();
         
         this._updateChatContext();
         this.scanAndRender();
@@ -140,41 +189,61 @@ export const AlbumUI = {
             const $item = $(`
                 <div class="DA-image-item" data-mesid="${mesId}" data-hidekey="${hideKey}" title="${prompt}">
                     <img class="DA-image-thumb" src="${src}" loading="lazy" alt="${prompt}" />
-                    <div class="DA-image-overlay">
-                        <div class="DA-image-info">
-                            ${style ? `<span class="DA-image-style">${style}</span>` : ''}
-                            <span class="DA-image-prompt">${prompt ? prompt.slice(0, 60) + (prompt.length > 60 ? '…' : '') : ''}</span>
-                        </div>
-                        <div class="DA-image-actions">
-                            <button class="DA-img-action DA-img-open" title="Открыть">
-                                <i class="fa-solid fa-expand"></i>
-                            </button>
-                            <button class="DA-img-action DA-img-scroll" title="В чат">
-                                <i class="fa-solid fa-message"></i>
-                            </button>
-                        </div>
-                    </div>
+                    <div class="DA-long-press-overlay"><i class="fa-solid fa-eye-slash"></i></div>
                 </div>
             `);
             
-            $item.find('.DA-img-open').on('click', (e) => {
-                e.stopPropagation();
+            this._setupLongPress($item, () => {
+                this._hideItem(hideKey);
+            });
+
+            $item.on('click', (e) => {
+                if ($item.data('long-pressed')) {
+                    $item.data('long-pressed', false);
+                    return;
+                }
                 this._openImageViewer(src, prompt, mesId, hideKey);
             });
-            
-            $item.find('.DA-img-scroll').on('click', (e) => {
-                e.stopPropagation();
-                this.close();
-                const $mes = $(`#chat .mes[mesid="${mesId}"]`);
-                if ($mes.length) {
-                    $mes[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    $mes.addClass('DA-highlight-mes');
-                    setTimeout(() => $mes.removeClass('DA-highlight-mes'), 2000);
-                }
-            });
-            
-            $item.on('click', () => this._openImageViewer(src, prompt, mesId, hideKey));
             $grid.append($item);
+        });
+    },
+
+    _setupLongPress($el, callback) {
+        let pressTimer;
+        let isLongPress = false;
+
+        const start = (e) => {
+            if (e.type === 'click' && e.button !== 0) return;
+            isLongPress = false;
+            $el.data('long-pressed', false);
+            pressTimer = window.setTimeout(() => {
+                isLongPress = true;
+                $el.data('long-pressed', true);
+                $el.addClass('DA-long-pressing');
+                
+                // Vibration feedback
+                if (navigator.vibrate) navigator.vibrate(40);
+                
+                if (callback) callback();
+                
+                // Keep overlay visible for 800ms to show the 'eye' before re-rendering or hiding
+                setTimeout(() => {
+                    $el.removeClass('DA-long-pressing');
+                }, 800);
+            }, 400); // Reduced to 400ms for snappier feel
+        };
+
+        const cancel = () => {
+            clearTimeout(pressTimer);
+        };
+
+        $el.on('mousedown touchstart', start);
+        $el.on('mouseup mouseleave touchend touchcancel', cancel);
+        $el.on('contextmenu', (e) => {
+            if (isLongPress || pressTimer) {
+                e.preventDefault();
+                return false;
+            }
         });
     },
     
@@ -217,12 +286,9 @@ export const AlbumUI = {
         const updateViewer = (index) => {
             const imgData = allImages[index];
             const $img = $viewer.find('.DA-viewer-img');
-            $img.css('opacity', 0);
             
-            setTimeout(() => {
-                $img.attr('src', imgData.src).css('opacity', 1);
-            }, 150);
-            
+            // Instant image update, no opacity/transition
+            $img.attr('src', imgData.src);
             
             $viewer.find('#DA-viewer-fullscreen').off('click').on('click', () => this.openFullScreenViewer(allImages.map(i => i.src), index));
             $viewer.find('.DA-viewer-img').off('click').on('click', () => this.openFullScreenViewer(allImages.map(i => i.src), index));
@@ -273,10 +339,12 @@ export const AlbumUI = {
     },
     
     openFullScreenViewer(imageList, currentIndex) {
+        console.log('[DreamAlbum] Opening FS Viewer, hiding button');
+        FloatingUI.hide();
         $('#DA-fullscreen-viewer').remove();
         let index = currentIndex;
         const $fs = $(`
-            <div id="DA-fullscreen-viewer">
+            <div id="DA-fullscreen-viewer" style="z-index: 2000000 !important;">
                 <div class="DA-fullscreen-header">
                     <button class="DA-fs-btn" id="DA-fs-rotate-left" title="Повернуть влево"><i class="fa-solid fa-rotate-left"></i></button>
                     <button class="DA-fs-btn" id="DA-fs-rotate-right" title="Повернуть вправо"><i class="fa-solid fa-rotate-right"></i></button>
@@ -324,12 +392,14 @@ export const AlbumUI = {
             updateFsTransform();
         });
         const closeFs = () => {
+            console.log('[DreamAlbum] Closing FS Viewer, showing button');
             $fs.removeClass('DA-visible');
             setTimeout(() => {
                 $fs.remove();
                 if (!$('#DreamAlbum-backdrop').hasClass('DA-visible')) {
                     $('body').removeClass('DA-no-scroll');
                 }
+                FloatingUI.show();
             }, 300);
         };
         $fs.find('#DA-fs-close').on('click', closeFs);
@@ -453,9 +523,23 @@ export const AlbumUI = {
                 const $item = $(`
                     <div class="DA-image-item">
                         <img class="DA-image-thumb" src="${src}" />
+                        <div class="DA-long-press-overlay"><i class="fa-solid fa-eye"></i></div>
                     </div>
                 `);
-                $item.on('click', () => this._openHiddenImageViewer(src, hideKey));
+                
+                this._setupLongPress($item, () => {
+                    this._unhideItem(hideKey);
+                    this._closeSubPanel($('#DA-hidden-panel'));
+                    this._openHiddenPanel();
+                });
+
+                $item.on('click', () => {
+                    if ($item.data('long-pressed')) {
+                        $item.data('long-pressed', false);
+                        return;
+                    }
+                    this._openHiddenImageViewer(src, hideKey);
+                });
                 $grid.append($item);
             });
         }
@@ -556,21 +640,14 @@ export const AlbumUI = {
             this.openFullScreenViewer(allImages, index);
         });
         
-        $viewer.find('#DA-viewer-prev').on('click', () => toastr.info('Переключение в скрытых пока не реализовано.'));
-        $viewer.find('#DA-viewer-next').on('click', () => toastr.info('Переключение в скрытых пока не реализовано.'));
+        $viewer.find('#DA-viewer-prev').on('click', () => {});
+        $viewer.find('#DA-viewer-next').on('click', () => {});
         
         $viewer.find('#DA-viewer-unhide').on('click', () => {
             this._unhideItem(hideKey);
             close();
             this._closeSubPanel($('#DA-hidden-panel'));
             this._openHiddenPanel();
-        });
-        $viewer.find('#DA-viewer-prompt').on('click', () => {
-            if (prompt) {
-                this._openPromptViewer(prompt);
-            } else {
-                toastr.info('Информация о промпте недоступна.');
-            }
         });
         $viewer.find('#DA-viewer-scroll').on('click', () => {
             close();
@@ -671,7 +748,15 @@ export const AlbumUI = {
         // Floating buttons settings
         const sets = extensionSettings.DreamAlbum.sets || [];
         const floatingStyles = extensionSettings.DreamAlbum.floating_buttons_styles || [];
-        
+        $sub.find('#DA-moodtube-link').prop('checked', extensionSettings.DreamAlbum.moodtube_link ?? false);
+        $sub.find('#DA-button-position').val(extensionSettings.DreamAlbum.button_position || 'top-left');
+
+        const btns = extensionSettings.DreamAlbum.action_buttons || { fullscreen: true, copy: true, edit: true, delete: true };
+        $sub.find('#DA-btn-show-fullscreen').prop('checked', btns.fullscreen ?? true);
+        $sub.find('#DA-btn-show-copy').prop('checked', btns.copy ?? true);
+        $sub.find('#DA-btn-show-edit').prop('checked', btns.edit ?? true);
+        $sub.find('#DA-btn-show-delete').prop('checked', btns.delete ?? true);
+
         for (let i = 1; i <= 3; i++) {
             const $select = $sub.find(`#DA-floating-style-${i}`);
             $select.empty().append('<option value="">-- Нет --</option>');
@@ -708,10 +793,21 @@ export const AlbumUI = {
                 if (val) newFloatingStyles.push(val);
             }
             extensionSettings.DreamAlbum.floating_buttons_styles = newFloatingStyles;
+            extensionSettings.DreamAlbum.moodtube_link = $sub.find('#DA-moodtube-link').prop('checked');
+            extensionSettings.DreamAlbum.button_position = $sub.find('#DA-button-position').val() || 'top-left';
+            extensionSettings.DreamAlbum.action_buttons = {
+                fullscreen: $sub.find('#DA-btn-show-fullscreen').prop('checked'),
+                copy: $sub.find('#DA-btn-show-copy').prop('checked'),
+                edit: $sub.find('#DA-btn-show-edit').prop('checked'),
+                delete: $sub.find('#DA-btn-show-delete').prop('checked')
+            };
             saveSettingsDebounced();
             await ApiService.loadApiPreset?.();
             
-            // Re-render floating buttons
+            // Re-render wrappers and floating buttons
+            const { MainUI } = await import('./MainUI.js');
+            MainUI.attachAllBlockWrappers?.();
+            
             const { FloatingUI } = await import('./FloatingUI.js');
             FloatingUI.render();
             this._closeSubPanel($sub);
@@ -760,7 +856,7 @@ export const AlbumUI = {
                     e.stopPropagation();
                     await SettingsService.changeSet(idx);
                     renderList();
-                    toastr.success(`Выбрано: ${set.name}`);
+                    // toastr.success(`Выбрано: ${set.name}`);
                 });
                 $item.find('.DA-style-edit').on('click', (e) => {
                     e.stopPropagation();
@@ -856,6 +952,43 @@ export const AlbumUI = {
      */
     _setupPanelListeners() {
         const $panel = $('#DreamAlbum-panel');
+
+        // Theme Dropdown
+        const $titleContainer = $('#DA-title-container');
+        const $themeDropdown = $('#DA-theme-dropdown');
+        
+        const DA_THEMES = {
+            'default': 'Оригинальная',
+            'tavern': 'SillyTavern',
+            'twilight': 'Сумерки',
+            'forest': 'Темный лес',
+            'ocean': 'Глубокий океан',
+            'eclipse': 'Затмение'
+        };
+
+        Object.entries(DA_THEMES).forEach(([id, name]) => {
+            const $item = $(`<div style="padding: 6px 10px; cursor: pointer; border-radius: 4px; transition: background 0.2s; color: var(--da-text);" onmouseover="this.style.background='var(--da-surface2)'" onmouseout="this.style.background='transparent'">${name}</div>`);
+            $item.on('click', (e) => {
+                e.stopPropagation();
+                extensionSettings.DreamAlbum.album_theme = id;
+                saveSettingsDebounced();
+                this.applyTheme();
+                $themeDropdown.hide();
+            });
+            $themeDropdown.append($item);
+        });
+
+        $titleContainer.on('click', (e) => {
+            e.stopPropagation();
+            $themeDropdown.toggle();
+        });
+
+        $(document).on('click', (e) => {
+            if (!$(e.target).closest('#DA-title-container').length) {
+                $themeDropdown.hide();
+            }
+        });
+
         // Power button
         const $powerBtn = $('#DA-power-btn');
         const updatePowerState = () => {
@@ -936,7 +1069,7 @@ export const AlbumUI = {
             $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> <span>Генерация...</span>');
             
             await GenerationService.triggerStyleGeneration(activeSet);
-            toastr.success('Запрос на генерацию отправлен! Подождите, пока SillyImages создаст изображение.');
+            // toastr.success('Запрос на генерацию отправлен! Подождите, пока SillyImages создаст изображение.');
             
             setTimeout(() => this.scanAndRender(), 3000);
             setTimeout(() => this.scanAndRender(), 8000);

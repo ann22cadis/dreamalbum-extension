@@ -15,6 +15,8 @@ export const SettingsService = {
      */
     checkSettings() {
         const dreamAlbumSettings = extensionSettings.DreamAlbum;
+        let needsSave = false;
+
         if (!dreamAlbumSettings.api_presets) {
             const oldPreset = { ...defaultApiPreset };
             if (dreamAlbumSettings.proxy_preset) {
@@ -34,6 +36,7 @@ export const SettingsService = {
                 'small': { ...oldPreset },
             };
             dreamAlbumSettings.active_api_preset = 'big';
+            needsSave = true;
         }
 
         let migration_done = false;
@@ -44,6 +47,7 @@ export const SettingsService = {
                 if (defaultProfile) {
                     preset.connection_profile = defaultProfile.name;
                     migration_done = true;
+                    needsSave = true;
                 } else {
                     toastr.error(`[DreamAlbum] Could not migrate API preset "${presetName}". No Connection Profiles found.`);
                 }
@@ -52,10 +56,13 @@ export const SettingsService = {
                 delete preset.model;
             }
 
-            preset.stream = false; // Always disable streaming
-            preset.top_p = preset.top_p ?? defaultApiPreset.top_p;
-            preset.max_tokens = preset.max_tokens ?? defaultApiPreset.max_tokens;
-            preset.reasoning_effort = preset.reasoning_effort ?? defaultApiPreset.reasoning_effort;
+            if (preset.stream !== false) {
+                preset.stream = false; // Always disable streaming
+                needsSave = true;
+            }
+            if (preset.top_p === undefined) { preset.top_p = defaultApiPreset.top_p; needsSave = true; }
+            if (preset.max_tokens === undefined) { preset.max_tokens = defaultApiPreset.max_tokens; needsSave = true; }
+            if (preset.reasoning_effort === undefined) { preset.reasoning_effort = defaultApiPreset.reasoning_effort; needsSave = true; }
         }
 
         if (migration_done) {
@@ -65,28 +72,41 @@ export const SettingsService = {
         // Initialize floating buttons settings if missing
         if (dreamAlbumSettings.floating_buttons_enabled === undefined) {
             dreamAlbumSettings.floating_buttons_enabled = defaultSettings.floating_buttons_enabled;
+            needsSave = true;
         }
         if (dreamAlbumSettings.floating_buttons_styles === undefined) {
             dreamAlbumSettings.floating_buttons_styles = defaultSettings.floating_buttons_styles;
+            needsSave = true;
+        }
+        if (dreamAlbumSettings.moodtube_link === undefined) {
+            dreamAlbumSettings.moodtube_link = defaultSettings.moodtube_link;
+            needsSave = true;
+        }
+        if (dreamAlbumSettings.album_theme === undefined) {
+            dreamAlbumSettings.album_theme = defaultSettings.album_theme;
+            needsSave = true;
+        }
+        if (dreamAlbumSettings.button_position === undefined) {
+            dreamAlbumSettings.button_position = defaultSettings.button_position;
+            needsSave = true;
+        }
+        if (dreamAlbumSettings.action_buttons === undefined) {
+            dreamAlbumSettings.action_buttons = defaultSettings.action_buttons;
+            needsSave = true;
         }
 
-        saveSettingsDebounced();
+        if (needsSave) {
+            saveSettingsDebounced();
+        }
     },
 
     /**
      * Loads settings into the extension state.
      */
     async loadSettings() {
-        // Migration from old DreamAlbum namespace
-        if (extensionSettings.DreamAlbum && !extensionSettings.DreamAlbum) {
-            console.log('[DreamAlbum] Migrating settings from DreamAlbum...');
-            extensionSettings.DreamAlbum = extensionSettings.DreamAlbum;
-            delete extensionSettings.DreamAlbum;
-            saveSettingsDebounced();
-        }
-
         if (!extensionSettings.DreamAlbum) {
             extensionSettings.DreamAlbum = defaultSettings;
+            saveSettingsDebounced();
         }
         this.checkSettings();
         await this.refreshSettings();

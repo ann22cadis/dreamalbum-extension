@@ -38,6 +38,15 @@ export const defaultSettings = {
     hidden_items: [],
     floating_buttons_enabled: false,
     floating_buttons_styles: [],
+    moodtube_link: false,
+    album_theme: 'default',
+    button_position: 'top-left',
+    action_buttons: {
+        fullscreen: true,
+        copy: true,
+        edit: true,
+        delete: true
+    },
 };
 
 export const extName = 'DreamAlbum';
@@ -56,7 +65,7 @@ function resolveExtensionPath() {
         return url.slice(markerIndex + marker.length, suffixIndex);
     }
 
-    return 'third-party/ext-blocks-custom';
+    return 'third-party/DreamAlbum';
 }
 
 export const path = resolveExtensionPath();

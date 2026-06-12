@@ -1,4 +1,5 @@
 import { checkWorldInfo } from '../../../../../world-info.js';
+import { macros as macroSystem } from '../../../../../macros/macro-system.js';
 import { mainPromptMacros, worldInfoMacrosNames, extName, MacroName, ExtTopic } from '../core/constants.js';
 import { BlockService } from './BlockService.js';
 import { ContextService } from './ContextService.js';
@@ -8,7 +9,6 @@ const {
     chatCompletionSettings,
     setupChatCompletionPromptManager,
     powerUserSettings,
-    macros,
     eventSource
 } = SillyTavern.getContext();
 const { runBlockGenerationCallback, runRewriteBlocksCallback, runScriptsExecutionCallback } = CommandService;
@@ -18,7 +18,7 @@ export const MacroService = {
      */
     registerExtensionMacros() {
         powerUserSettings.experimental_macro_engine = true;
-        macros.registry.registerMacro(MacroName.MAIN, {
+        macroSystem.registry.registerMacro(MacroName.MAIN, {
             category: extName,
             description: 'Returns the content of a block by its name.',
             unnamedArgs: [
@@ -39,7 +39,7 @@ export const MacroService = {
                 else return ContextService.getPreviousBlockContextUnconditional(block, chat.length - 1, true);
             }
         });
-        macros.registry.registerMacro(MacroName.CALL_GENERATION, {
+        macroSystem.registry.registerMacro(MacroName.CALL_GENERATION, {
             category: extName,
             description: 'Calls block generation by block name.',
             unnamedArgs: [
@@ -62,7 +62,7 @@ export const MacroService = {
                 return '';
             }
         });
-        macros.registry.registerMacro(MacroName.CALL_REWRITE, {
+        macroSystem.registry.registerMacro(MacroName.CALL_REWRITE, {
             category: extName,
             description: 'Calls message rewrite by block name.',
             unnamedArgs: [
@@ -85,7 +85,7 @@ export const MacroService = {
                 return '';
             }
         });
-        macros.registry.registerMacro(MacroName.CALL_SCRIPT, {
+        macroSystem.registry.registerMacro(MacroName.CALL_SCRIPT, {
             category: extName,
             description: 'Runs script execution generation by block name.',
             unnamedArgs: [
@@ -107,11 +107,11 @@ export const MacroService = {
      * Unregisters extension macros.
      */
     unregisterExtensionMacros() {
-        macros.registry.unregisterMacro(MacroName.GET_BLOCK_BY_NAME);
-        macros.registry.unregisterMacro(MacroName.MAIN);
-        macros.registry.unregisterMacro(MacroName.CALL_GENERATION);
-        macros.registry.unregisterMacro(MacroName.CALL_REWRITE);
-        macros.registry.unregisterMacro(MacroName.CALL_SCRIPT);
+        macroSystem.registry.unregisterMacro(MacroName.GET_BLOCK_BY_NAME);
+        macroSystem.registry.unregisterMacro(MacroName.MAIN);
+        macroSystem.registry.unregisterMacro(MacroName.CALL_GENERATION);
+        macroSystem.registry.unregisterMacro(MacroName.CALL_REWRITE);
+        macroSystem.registry.unregisterMacro(MacroName.CALL_SCRIPT);
     },
     /**
      * Processes World Info macros in the prompt.

@@ -225,7 +225,24 @@ export const ApiService = {
             return data;
         } else {
             const errorText = await response.text();
-            console.error('[DreamAlbum] API response error:', errorText);
+            console.error('[DreamAlbum] API response error:', response.status, errorText);
+            let friendlyMsg = '';
+            if (response.status === 429) {
+                friendlyMsg = `Ошибка 429: слишком много запросов. Попробуйте позже или смените профиль.`;
+            } else if (response.status === 401 || response.status === 403) {
+                friendlyMsg = `Ошибка ${response.status}: неверный API-ключ или нет доступа.`;
+            } else if (response.status >= 500) {
+                friendlyMsg = `Ошибка сервера ${response.status}. Попробуйте позже.`;
+            } else {
+                // Try to extract a message from the error body
+                try {
+                    const errJson = JSON.parse(errorText);
+                    friendlyMsg = errJson?.error?.message || errJson?.message || `Ошибка ${response.status}: ${response.statusText}`;
+                } catch {
+                    friendlyMsg = `Ошибка ${response.status}: ${errorText.substring(0, 120)}`;
+                }
+            }
+            toastr.error(friendlyMsg, `[DreamAlbum] Ошибка генерации`);
             throw new Error(`Got response status ${response.status}: ${errorText.substring(0, 100)}`);
         }
     },
