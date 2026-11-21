@@ -2,6 +2,7 @@ import { getFileText } from '../../../../../utils.js';
 import { extStates } from '../core/state.js';
 import { defaultSettings, defaultApiPreset, defaultSet } from '../core/constants.js';
 import { updateOrInsert } from '../utils/dataUtils.js';
+import { downscaleImage, dataUrlBytes, COVER_MAX_BYTES } from '../utils/imageUtils.js';
 
 import { ApiService } from './ApiService.js';
 import { MainUI } from '../ui/MainUI.js';
@@ -74,6 +75,10 @@ export const SettingsService = {
             dreamAlbumSettings.floating_buttons_enabled = defaultSettings.floating_buttons_enabled;
             needsSave = true;
         }
+        if (dreamAlbumSettings.compress_context_whitespace === undefined) {
+            dreamAlbumSettings.compress_context_whitespace = defaultSettings.compress_context_whitespace;
+            needsSave = true;
+        }
         if (dreamAlbumSettings.floating_buttons_styles === undefined) {
             dreamAlbumSettings.floating_buttons_styles = defaultSettings.floating_buttons_styles;
             needsSave = true;
@@ -90,8 +95,16 @@ export const SettingsService = {
             dreamAlbumSettings.button_position = defaultSettings.button_position;
             needsSave = true;
         }
+        if (dreamAlbumSettings.extblocks_installed === undefined) {
+            dreamAlbumSettings.extblocks_installed = defaultSettings.extblocks_installed;
+            needsSave = true;
+        }
         if (dreamAlbumSettings.action_buttons === undefined) {
             dreamAlbumSettings.action_buttons = defaultSettings.action_buttons;
+            needsSave = true;
+        }
+        if (!Array.isArray(dreamAlbumSettings.floating_group_styles)) {
+            dreamAlbumSettings.floating_group_styles = [];
             needsSave = true;
         }
 
@@ -110,6 +123,38 @@ export const SettingsService = {
         }
         this.checkSettings();
         await this.refreshSettings();
+    },
+
+    /**
+     * Shrinks style covers that were stored full-size by older versions.
+     * Covers live inline in settings.json, so a handful of raw photos can push the
+     * file into the tens of megabytes — and SillyTavern backs it up on every save.
+     * @returns {Promise<void>}
+     */
+    async compactStyleCovers() {
+        const sets = extensionSettings.DreamAlbum?.sets ?? [];
+        let savedBytes = 0;
+        let converted = 0;
+
+        for (const set of sets) {
+            const before = dataUrlBytes(set?.image);
+            if (before <= COVER_MAX_BYTES) continue;
+
+            const thumb = await downscaleImage(set.image);
+            const after = dataUrlBytes(thumb);
+            if (after >= before) continue;
+
+            set.image = thumb;
+            savedBytes += before - after;
+            converted++;
+        }
+
+        if (converted > 0) {
+            const mb = (savedBytes / 1048576).toFixed(1);
+            console.log(`[DreamAlbum] Compacted ${converted} style cover(s), freed ${mb} MB in settings.json.`);
+            toastr.info(`Обложки стилей сжаты (${converted} шт.), настройки полегчали на ${mb} МБ.`, 'DreamAlbum');
+            saveSettingsDebounced();
+        }
     },
 
     /**
@@ -137,6 +182,21 @@ export const SettingsService = {
      */
     getDefaultSet() {
         return JSON.parse(JSON.stringify(defaultSet));
+    },
+
+    /**
+     * Repoints everything that refers to a style by name after it is renamed.
+     * @param {string} oldName
+     * @param {string} newName
+     */
+    renameStyleReferences(oldName, newName) {
+        const settings = extensionSettings.DreamAlbum;
+        if (settings.active_set === oldName) settings.active_set = newName;
+        for (const key of ['floating_buttons_styles', 'floating_group_styles']) {
+            if (Array.isArray(settings[key])) {
+                settings[key] = settings[key].map(name => (name === oldName ? newName : name));
+            }
+        }
     },
 
     /**

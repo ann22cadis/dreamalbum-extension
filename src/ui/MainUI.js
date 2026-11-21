@@ -25,6 +25,10 @@ export const MainUI = {
      * Adds edit buttons to all messages in the chat.
      */
     addEditButtons() {
+        if (extStates.DreamAlbum_settings?.extblocks_installed) {
+            $('#chat .mes .extraMesButtons .DreamAlbum-storage-edit').remove();
+            return;
+        }
         $('#chat .mes').each(function() {
             if ($(this).find('.extraMesButtons .DreamAlbum-storage-edit').length === 0) {
                 $(this).find('.extraMesButtons').append(editButton);
@@ -35,6 +39,10 @@ export const MainUI = {
      * Adds an edit button to the last message in the chat.
      */
     addEditButtonToLastMessage() {
+        if (extStates.DreamAlbum_settings?.extblocks_installed) {
+            $('#chat .mes').last().find('.extraMesButtons .DreamAlbum-storage-edit').remove();
+            return;
+        }
         var lastMes = $('#chat .mes').last();
         if (lastMes.find('.extraMesButtons .DreamAlbum-storage-edit').length === 0) {
             lastMes.find('.extraMesButtons').append(editButton);
@@ -340,7 +348,17 @@ export const MainUI = {
             if ($container.parent('.DA-block-content').length) return;
             if ($container.find('[data-iig-instruction]').length) return;
             const blockName = $container.attr('data-da-name') || 'unknown';
+            
             wrapElement($container, blockName);
+        });
+        
+        // 3. Compatibility mode: wrap bare <ext-blocks> tags rendered by the original Ext-blocks extension
+        $mes.find('ext-blocks').each(function() {
+            const $container = $(this);
+            if ($container.parent('.DA-block-content').length) return;
+            if ($container.find('[data-iig-instruction]').length) return;
+            // Since it's ext-blocks, we assume the name is ext-blocks
+            wrapElement($container, 'ext-blocks');
         });
         this.attachShadowHosts(messageId);
         this.attachStyleScoping(messageId);

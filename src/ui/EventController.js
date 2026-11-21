@@ -12,6 +12,7 @@ import { SettingsService } from '../services/SettingsService.js';
 import { MainUI } from './MainUI.js';
 import { FloatingUI } from './FloatingUI.js';
 import { getRegexForBlock } from '../utils/blockUtils.js';
+import { readStore, writeStore, migrateMessage } from '../utils/messageStore.js';
 const {
     eventSource,
     event_types,
@@ -48,6 +49,8 @@ export const EventController = {
                 extStates.cachedPauseBlocks = null;
                 extStates.pauseCounter = 0;
             }
+
+            await BlockService.migrateLegacyStorage();
             
             setTimeout(() => {
                 MainUI.attachAllBlockWrappers();
@@ -260,22 +263,42 @@ export const EventController = {
             }
         });
         
+        // Third-party image generators inject nodes into rendered messages after the
+        // fact. Re-wrapping the whole chat on every mutation is far too expensive
+        // during streaming, so collect the affected message ids and flush them once
+        // per frame, touching only the messages that actually changed.
+        const pendingWraps = new Set();
+        let wrapScheduled = false;
+
+        const flushWraps = () => {
+            wrapScheduled = false;
+            const ids = [...pendingWraps];
+            pendingWraps.clear();
+            for (const id of ids) MainUI.attachBlockWrappers(id);
+        };
+
+        const queueWrap = (node) => {
+            const mes = node.nodeType === Node.ELEMENT_NODE ? node.closest('.mes') : node.parentElement?.closest('.mes');
+            const id = mes?.getAttribute('mesid');
+            if (id === null || id === undefined) return;
+            pendingWraps.add(id);
+            if (wrapScheduled) return;
+            wrapScheduled = true;
+            requestAnimationFrame(flushWraps);
+        };
+
+        const WRAP_SELECTOR = '[data-iig-instruction], .da-block-container';
         const chatObserver = new MutationObserver((mutations) => {
             if (!extensionSettings.DreamAlbum.dreamalbum_is_enabled) return;
-            let shouldAttach = false;
             for (const mutation of mutations) {
                 for (const node of mutation.addedNodes) {
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        if ($(node).find('[data-iig-instruction], .da-block-container').addBack('[data-iig-instruction], .da-block-container').length > 0) {
-                            shouldAttach = true;
-                            break;
-                        }
+                    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                    // Skip our own wrappers so re-wrapping cannot feed itself.
+                    if (node.classList?.contains('DA-interactive-block')) continue;
+                    if (node.matches(WRAP_SELECTOR) || node.querySelector(WRAP_SELECTOR)) {
+                        queueWrap(node);
                     }
                 }
-                if (shouldAttach) break;
-            }
-            if (shouldAttach) {
-                MainUI.attachAllBlockWrappers();
             }
         });
         const chatEl = document.getElementById('chat');
@@ -446,7 +469,7 @@ export const EventController = {
             }[m]));
             
             const message = chat[messageId];
-            if (message && message.extra && message.extra.extblocks) {
+            if (message && readStore(message.extra)) {
                 
                 $block.find('.DA-block-loading').show();
                 $block.find('.DA-block-content > *:not(.DA-block-loading)').hide();
@@ -495,15 +518,15 @@ export const EventController = {
                     });
                 };
 
-                message.extra.extblocks = updateHtmlString(message.extra.extblocks);
+                writeStore(message.extra, updateHtmlString(readStore(message.extra)));
                 if (message.mes) {
                     message.mes = updateHtmlString(message.mes);
                 }
                 
                 if (message.swipe_id !== undefined && message.swipe_info?.[message.swipe_id]) {
                     const extra = message.swipe_info[message.swipe_id].extra;
-                    if (extra && extra.extblocks) {
-                        extra.extblocks = updateHtmlString(extra.extblocks);
+                    if (readStore(extra)) {
+                        writeStore(extra, updateHtmlString(readStore(extra)));
                     }
                     if (message.swipe_info[message.swipe_id].mes) {
                         message.swipe_info[message.swipe_id].mes = updateHtmlString(message.swipe_info[message.swipe_id].mes);
@@ -553,7 +576,7 @@ export const EventController = {
             });
             if (!confirmResult) return;
             const message = chat[messageId];
-            if (message && message.extra && message.extra.extblocks) {
+            if (message && readStore(message.extra)) {
                 const imgIndex = $img.length ? $mes.find('[data-iig-instruction]').index($img) : -1;
 
                 const removeMatch = (content) => {
@@ -612,15 +635,15 @@ export const EventController = {
                     return content;
                 };
                 
-                message.extra.extblocks = removeMatch(message.extra.extblocks);
+                writeStore(message.extra, removeMatch(readStore(message.extra)));
                 if (message.mes) {
                     message.mes = removeMatch(message.mes);
                 }
                 
                 if (message.swipe_id !== undefined && message.swipe_info?.[message.swipe_id]) {
                     const extra = message.swipe_info[message.swipe_id].extra;
-                    if (extra && extra.extblocks) {
-                        extra.extblocks = removeMatch(extra.extblocks);
+                    if (readStore(extra)) {
+                        writeStore(extra, removeMatch(readStore(extra)));
                     }
                     if (message.swipe_info[message.swipe_id].mes) {
                         message.swipe_info[message.swipe_id].mes = removeMatch(message.swipe_info[message.swipe_id].mes);

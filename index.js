@@ -77,6 +77,7 @@ jQuery(async () => {
         }
         
         injectWandButton();
+        SettingsService.compactStyleCovers().catch(err => console.error('[DreamAlbum] Cover compaction failed:', err));
         console.log(`[DreamAlbum] extension loaded`);
     } catch (error) {
         console.error('[DreamAlbum] Critical extension load error:', error);

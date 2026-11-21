@@ -1,10 +1,11 @@
 import { getFileText } from '../../../../../utils.js';
 import { extStates } from '../core/state.js';
-import { extName, BlockType, defaultExtPrefix, MessageRole } from '../core/constants.js';
+import { extName, BlockType, defaultExtPrefix, MessageRole, LEGACY_BLOCK_ALIASES } from '../core/constants.js';
 import { ContextService } from './ContextService.js';
 import { ApiService } from './ApiService.js';
 import { getRegexForBlock, getBlockFromMessage, wrapInDAContainer, checkAttributesInBlockName } from '../utils/blockUtils.js';
 import { updateOrInsert } from '../utils/dataUtils.js';
+import { readStore, writeStore, migrateMessage, composeDisplayText, stripDisplaySection } from '../utils/messageStore.js';
 
 const {
     saveSettingsDebounced,
@@ -151,9 +152,12 @@ export const BlockService = {
      * Purges display text for a message.
      */
     purgeBlocksDisplayText(messageId) {
-        if (chat[messageId]?.extra?.display_text) {
-            delete chat[messageId].extra.display_text;
-        }
+        const message = chat[messageId];
+        if (!message?.extra?.display_text) return;
+        // Strip only DreamAlbum's section; anything Ext-blocks appended stays.
+        const rest = stripDisplaySection(message.extra.display_text);
+        if (rest === (message.mes || '') || !rest) delete message.extra.display_text;
+        else message.extra.display_text = rest;
     },
 
     /**
@@ -163,12 +167,12 @@ export const BlockService = {
         const message = chat[messageId];
         if (!message || !message.extra) return;
 
-        message.extra.extblocks = '';
+        writeStore(message.extra, '');
 
         if (message.swipe_id) {
             const current_swipe_id = message.swipe_id;
             if (message.swipe_info?.[current_swipe_id]?.extra) {
-                message.swipe_info[current_swipe_id].extra.extblocks = '';
+                writeStore(message.swipe_info[current_swipe_id].extra, '');
             }
         }
 
@@ -184,9 +188,7 @@ export const BlockService = {
     async purgeAllBlocksDisplayText() {
         for (let messageId = 0; messageId < chat.length; messageId++) {
             const message = chat[messageId];
-            if (message?.extra?.display_text) {
-                delete message.extra.display_text;
-            }
+            this.purgeBlocksDisplayText(messageId);
             updateMessageBlock(messageId, message, { rerenderMessage: true });
         }
         await saveChat();
@@ -196,7 +198,7 @@ export const BlockService = {
      * Gets blocks from message extra storage.
      */
     getBlocksFromExtra(messageId) {
-        return chat[messageId]?.extra?.extblocks || '';
+        return readStore(chat[messageId]?.extra);
     },
 
     /**
@@ -214,23 +216,34 @@ export const BlockService = {
 
     /**
      * Adds blocks to message extra storage.
+     * @param {number|string} messageId
+     * @param {string} blocksStr
+     * @param {Object} [options]
+     * @param {boolean} [options.wrapUnknownTags=true] When true (the generation path),
+     *   content whose leading tag is not a configured block gets wrapped in one, since
+     *   a model may return bare text. The storage editor passes false: it round-trips
+     *   markup that is already stored, so renaming a tag there must not wrap it again.
      */
-    async addBlocksToExtra(messageId, blocksStr) {
+    async addBlocksToExtra(messageId, blocksStr, { wrapUnknownTags = true } = {}) {
         let effectiveId = Math.max(Math.min(messageId, chat.length - 1), 0);
         const message = chat[effectiveId];
         if (!message) return;
 
         if (!message.extra) message.extra = {};
 
-        // Auto-wrap block if not already wrapped in a known block tag name
+        // Auto-wrap block if not already wrapped in a block tag
         const allBlocks = this.getAllBlocks();
         const trimStr = blocksStr.trim();
         const startTagMatch = trimStr.match(/^<([^\s>]+)/);
         const startTagName = startTagMatch ? startTagMatch[1] : '';
-        const isWrapped = allBlocks.some(b => {
+        const isKnownTag = allBlocks.some(b => {
             const { upper_block_name } = checkAttributesInBlockName(b.name);
             return upper_block_name.toLowerCase() === startTagName.toLowerCase();
         });
+        // Any leading tag counts as already-wrapped unless we are explicitly asked to
+        // normalise unknown tags; otherwise editing a tag name wraps the whole
+        // storage — every block in it — inside one more wrapper on every save.
+        const isWrapped = wrapUnknownTags ? isKnownTag : startTagName !== '';
 
         let finalBlocksStr = blocksStr;
         if (!isWrapped && startTagName.toLowerCase() !== 'div') {
@@ -250,8 +263,10 @@ export const BlockService = {
             return result;
         };
 
-        const currentExtBlocks = purgeBlocks(message.extra.extblocks);
-        message.extra.extblocks = (currentExtBlocks === '' ? finalBlocksStr : `${currentExtBlocks}\n${finalBlocksStr}`).trim();
+        const currentExtBlocks = purgeBlocks(readStore(message.extra));
+        const newValue = (currentExtBlocks === '' ? finalBlocksStr : `${currentExtBlocks}\n${finalBlocksStr}`).trim();
+
+        writeStore(message.extra, newValue);
 
         if (message.swipe_id) {
             const swipeId = message.swipe_id;
@@ -267,14 +282,14 @@ export const BlockService = {
             if (!message.swipe_info[swipeId].extra) message.swipe_info[swipeId].extra = {};
 
             const swipeExtra = message.swipe_info[swipeId].extra;
-            const currentSwipeExtBlocks = purgeBlocks(swipeExtra.extblocks);
-            swipeExtra.extblocks = (currentSwipeExtBlocks === '' ? finalBlocksStr : `${currentSwipeExtBlocks}\n${finalBlocksStr}`).trim();
+            const currentSwipeExtBlocks = purgeBlocks(readStore(swipeExtra));
+            writeStore(swipeExtra, (currentSwipeExtBlocks === '' ? finalBlocksStr : `${currentSwipeExtBlocks}\n${finalBlocksStr}`).trim());
         }
 
         if (finalBlocksStr) {
-            console.log(`[DreamAlbum] Adding blocks to message ${effectiveId}:`, finalBlocksStr);
+            console.log(`[DreamAlbum] Adding ${blockNames.length} block(s) to message ${effectiveId}: ${blockNames.join(', ')}`);
         }
-        
+
         // Add a small delay to ensure no race conditions with other extensions
         setTimeout(async () => {
             await this.updateBlocksDisplay(effectiveId);
@@ -291,16 +306,14 @@ export const BlockService = {
         const message = chat[messageId];
         if (!message) return;
 
-        if (!message.extra?.extblocks) {
-            if (message.extra?.display_text) {
-                delete message.extra.display_text;
-            }
-        } else {
+        const store = readStore(message.extra);
+        const blocksToDisplay = [];
+
+        if (store) {
             const allBlocks = this.getAllBlocks();
-            const blocksToDisplay = [];
-            
-            // Get all block tag names actually present in extblocks content
-            const presentBlockNames = [...message.extra.extblocks.matchAll(/<([^\/\s>]+)/g)].map(match => match[1]);
+
+            // Get all block tag names actually present in the stored content
+            const presentBlockNames = [...store.matchAll(/<([^\/\s>]+)/g)].map(match => match[1]);
             const uniqueNames = [...new Set(presentBlockNames)];
 
             for (const tagName of uniqueNames) {
@@ -310,25 +323,25 @@ export const BlockService = {
                     continue;
                 }
 
-                const blockContent = getBlockFromMessage(message.extra.extblocks, tagName);
+                const blockContent = getBlockFromMessage(store, tagName);
                 if (blockContent) {
                     // All blocks are wrapped in a standard container for better rendering
                     blocksToDisplay.push(wrapInDAContainer(tagName, blockContent));
                 }
             }
-            if (blocksToDisplay.length === 0) {
-                console.warn(`[DreamAlbum] No valid blocks found to display for message ${messageId} in extblocks content:`, message.extra.extblocks);
-            } else {
-                console.log(`[DreamAlbum] Prepared ${blocksToDisplay.length} blocks for display in message ${messageId}`);
-            }
-            const latestMes = chat[messageId]?.mes || message.mes;
-            const newDisplayText = latestMes + `\n${blocksToDisplay.join('\n')}`;
-            
-            if (message.extra.display_text === newDisplayText) {
-                console.log(`[DreamAlbum] Content for message ${messageId} unchanged, skipping render.`);
-                return;
-            }
-            
+        }
+
+        // Compose cooperatively: keep whatever another extension (Ext-blocks) appended
+        // and swap only DreamAlbum's own marker-delimited section.
+        const latestMes = chat[messageId]?.mes || message.mes || '';
+        const newDisplayText = composeDisplayText(latestMes, message.extra?.display_text, blocksToDisplay.join('\n'));
+
+        if (!message.extra) message.extra = {};
+        if (newDisplayText === null) {
+            if (message.extra.display_text !== undefined) delete message.extra.display_text;
+        } else if (message.extra.display_text === newDisplayText) {
+            return;
+        } else {
             message.extra.display_text = newDisplayText;
         }
 
@@ -337,7 +350,7 @@ export const BlockService = {
             // Но только если сообщение сейчас не находится в процессе генерации другим расширением
             const $mes = $(`#chat .mes[mesid="${messageId}"]`);
             const isForeignBusy = $mes.find('.iig-loading-placeholder, .iig-regen-busy, .iig-regen-active, .iig-spinner, [class*="regen-busy"]').length > 0;
-            
+
             if (isForeignBusy) {
                 console.log('[DreamAlbum] External generator busy, updating message data WITHOUT re-rendering UI.');
                 updateMessageBlock(messageId, message, { rerenderMessage: false });
@@ -347,16 +360,16 @@ export const BlockService = {
         } else {
             updateMessageBlock(messageId, message, { rerenderMessage: false });
         }
-        
+
         // "Умный мониторинг": следим за завершением генерации внешними расширениями
         const pollId = `da-poll-${messageId}-${Date.now()}`;
         if (this._activePolls === undefined) this._activePolls = new Set();
-        
+
         // Предотвращаем запуск нескольких циклов для одного сообщения
         if (this._activePolls.has(messageId)) return;
-        
+
         // Не запускаем поллинг, если нет ожидающих изображений
-        const initialExtBlocks = chat[messageId]?.extra?.extblocks || '';
+        const initialExtBlocks = readStore(chat[messageId]?.extra);
         const initialPending = initialExtBlocks.includes('[IMG:GEN]') || initialExtBlocks.includes('src=""') || initialExtBlocks.includes('src="#"');
         if (!initialPending) return;
 
@@ -364,12 +377,12 @@ export const BlockService = {
 
         let attempts = 0;
         const maxAttempts = 60; // 2 минуты (60 * 2сек)
-        
+
         const poll = async () => {
             attempts++;
             const currentMessage = chat[messageId];
-            
-            if (!currentMessage || !currentMessage.extra?.extblocks) {
+
+            if (!currentMessage || !readStore(currentMessage.extra)) {
                 this._activePolls.delete(messageId);
                 return;
             }
@@ -377,7 +390,7 @@ export const BlockService = {
             const $mes = $(`#chat .mes[mesid="${messageId}"]`);
             const isForeignBusy = $mes.find('.iig-loading-placeholder, .iig-regen-busy, .iig-regen-active, .iig-spinner, [class*="regen-busy"], .iig-regenerate-btn.interactable.fa-spin').length > 0;
 
-            let extBlocks = currentMessage.extra.extblocks;
+            let extBlocks = readStore(currentMessage.extra);
             let hasPending = extBlocks.includes('[IMG:GEN]') || extBlocks.includes('src=""') || extBlocks.includes('src="#"');
             const hasError = extBlocks.includes('error.svg') || extBlocks.includes('[IMG:ERROR]');
             const hasRealImage = extBlocks.includes('src="/') || extBlocks.includes('src="data:');
@@ -387,12 +400,12 @@ export const BlockService = {
             if (!hasPending || hasError || hasRealImage) {
                 console.log(`[DreamAlbum] Image generation naturally finished for message ${messageId}. Re-rendering.`);
                 this._activePolls.delete(messageId);
-                
+
                 // Анимируем кнопку (плавающую или главную в альбоме) вместо toastr-уведомления
                 if (hasRealImage) {
-                    let $btn = $('#DA-floating-container .DA-floating-btn').not('#DA-moodtube-placeholder').first();
+                    let $btn = $('#DA-floating-container .DA-floating-btn').not('#DA-moodtube-placeholder').not('.DA-tray-btn').first();
                     if (!$btn.length || !$btn.is(':visible')) $btn = $('#DA-create-btn');
-                    
+
                     if ($btn.length) {
                         const originalContent = $btn.html();
                         const originalStyle = $btn.attr('style') || '';
@@ -409,7 +422,7 @@ export const BlockService = {
                         }, 3000);
                     }
                 }
-                
+
                 await this.updateBlocksDisplay(messageId, true);
                 return;
             }
@@ -426,7 +439,7 @@ export const BlockService = {
 
             // Принудительно извлекаем новые блоки (вдруг DOM изменился)
             await this.extractBlocksFromMessage(messageId);
-            extBlocks = currentMessage.extra.extblocks || '';
+            extBlocks = readStore(currentMessage.extra);
             hasPending = extBlocks.includes('[IMG:GEN]') || extBlocks.includes('src=""') || extBlocks.includes('src="#"');
 
             if (hasPending) {
@@ -435,7 +448,7 @@ export const BlockService = {
                 const errSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect width="300" height="200" fill="#2b1a1a" rx="10"/><text x="150" y="90" dominant-baseline="middle" text-anchor="middle" fill="#ff6b6b" font-family="sans-serif" font-size="24" font-weight="bold">Ошибка</text><text x="150" y="125" dominant-baseline="middle" text-anchor="middle" fill="#ff6b6b" font-family="sans-serif" font-size="14">Генерация прервана</text></svg>';
                 const errImg = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(errSvg)));
                 extBlocks = extBlocks.replaceAll('[IMG:GEN]', errImg).replaceAll('src=""', `src="${errImg}"`).replaceAll('src="#"', `src="${errImg}"`);
-                currentMessage.extra.extblocks = extBlocks;
+                writeStore(currentMessage.extra, extBlocks);
                 if (currentMessage.mes) {
                     currentMessage.mes = currentMessage.mes.replaceAll('[IMG:GEN]', errImg).replaceAll('src=""', `src="${errImg}"`).replaceAll('src="#"', `src="${errImg}"`);
                 }
@@ -447,7 +460,7 @@ export const BlockService = {
 
             await this.updateBlocksDisplay(messageId, true);
         };
-        
+
         setTimeout(poll, 2000);
     },
 
@@ -479,7 +492,7 @@ export const BlockService = {
 
         const combinedTemplate = blocks.map(block => block.template ? substituteParams(block.template, { dynamicMacros: additionalMacro }) : '').filter(t => t !== '').join('\n');
         const combinedPrompt = blocks.map(block => block.prompt ? substituteParams(block.prompt, { dynamicMacros: additionalMacro }) : '').filter(p => p !== '').join('\n');
-        
+
         let finalInstruction = '';
         if (combinedPrompt) finalInstruction += `### Block(s) prompt:\n${combinedPrompt}\n\n`;
         if (combinedTemplate) finalInstruction += `### Block(s) template:\n${combinedTemplate}\n\n`;
@@ -492,7 +505,7 @@ export const BlockService = {
             // Inject extra context based on API preset
             const apiPresetName = blocks[0].api_preset || 'big';
             const preset = ApiService.getApiPreset(apiPresetName);
-            
+
             let extraContext = '';
             if (preset.include_char_card) {
                 if (context.groupId !== undefined) {
@@ -501,23 +514,23 @@ export const BlockService = {
                         activeGroup.members.forEach(charId => {
                             const char = context.characters?.find(c => c.avatar === charId || c.id == charId);
                             if (char) {
-                                extraContext += `Character (${char.name}) Description: ${char.description}\n`;
+                                extraContext += `Character (${char.name}) Description: ${ContextService.compactContext(char.description)}\n`;
                             }
                         });
                     }
                 } else {
-                    extraContext += `Character (${context.name2}) Description: ${context.description}\n`;
+                    extraContext += `Character (${context.name2}) Description: ${ContextService.compactContext(context.description)}\n`;
                 }
             }
 
             if (preset.include_persona) {
-                extraContext += `User (${context.name1}) Description: ${context.user_description || 'No description provided'}\n`;
+                extraContext += `User (${context.name1}) Description: ${ContextService.compactContext(context.user_description) || 'No description provided'}\n`;
             }
 
             if (preset.include_lorebooks) {
                 const wi = substituteParams('{{wiAll}}');
                 if (wi && wi !== '{{wiAll}}') {
-                    extraContext += `World Info:\n${wi}\n`;
+                    extraContext += `World Info:\n${ContextService.compactContext(wi)}\n`;
                 }
             }
 
@@ -580,11 +593,7 @@ export const BlockService = {
         const message = chat[messageId];
         if (!message) return;
 
-        if (message.swipe_info?.[swipeId]?.extra?.extblocks) {
-            message.extra.extblocks = message.swipe_info[swipeId].extra.extblocks;
-        } else {
-            message.extra.extblocks = '';
-        }
+        writeStore(message.extra, readStore(message.swipe_info?.[swipeId]?.extra));
 
         if (updateDisplay) {
             await this.updateBlocksDisplay(messageId);
@@ -610,7 +619,33 @@ export const BlockService = {
         };
         if (!message.swipe_info[0].extra) message.swipe_info[0].extra = {};
 
-        message.swipe_info[0].extra.extblocks = message.extra.extblocks || '';
+        writeStore(message.swipe_info[0].extra, readStore(message.extra));
+    },
+
+    /**
+     * Moves DreamAlbum-owned blocks out of the legacy `extra.extblocks` key, which is
+     * shared with the original Ext-blocks extension, into DreamAlbum's own key.
+     * Idempotent: each message is converted at most once. The legacy value is left
+     * untouched so Ext-blocks keeps whatever belongs to it.
+     */
+    async migrateLegacyStorage() {
+        const blockNames = this.getAllBlocks().map(b => b.name).filter(Boolean);
+        if (!blockNames.length && !Object.keys(LEGACY_BLOCK_ALIASES).length) return;
+
+        let moved = 0;
+        let touched = false;
+        for (let messageId = 0; messageId < chat.length; messageId++) {
+            const message = chat[messageId];
+            if (!message?.extra) continue;
+            const before = readStore(message.extra);
+            if (migrateMessage(message, blockNames, LEGACY_BLOCK_ALIASES)) moved++;
+            if (readStore(message.extra) !== before) touched = true;
+        }
+
+        if (moved > 0) {
+            console.log(`[DreamAlbum] Migrated blocks in ${moved} message(s) from the shared "extblocks" key.`);
+        }
+        if (touched) await saveChat();
     },
 
     /**
@@ -654,7 +689,7 @@ export const BlockService = {
             // Regex from blockUtils now supports unclosed/self-closing tags
             const regex = new RegExp(getRegexForBlock(block.name), 'g');
             const matches = modifiedMes.match(regex);
-            
+
             if (matches) {
                 hasFoundAny = true;
                 for (const match of matches) {
@@ -664,21 +699,40 @@ export const BlockService = {
             }
         }
 
-        // 2. Special case: if it contains an image tag [IMG:GEN:...] or [IMG:...] but wasn't tagged
-        if (modifiedMes.trim().match(/\[IMG:(?:GEN:)?([^\]]+)\]/i)) {
+        // 2 & 3. Combine all image tags into a single block wrapper so they aren't lost by getBlockFromMessage
+        let imagesToWrap = [];
+
+        const legacyMatches = modifiedMes.match(/\[IMG:(?:GEN:)?[^\]]+\]/ig);
+        if (legacyMatches) {
+            imagesToWrap.push(...legacyMatches);
+            for (const match of legacyMatches) {
+                modifiedMes = modifiedMes.replace(match, '');
+                hasFoundAny = true;
+            }
+        }
+
+        const sillyImagesRegex = /<(?:img|video)\s+data-iig-instruction=[^>]+>/ig;
+        const sillyMatches = modifiedMes.match(sillyImagesRegex);
+        if (sillyMatches) {
+            imagesToWrap.push(...sillyMatches);
+            for (const match of sillyMatches) {
+                modifiedMes = modifiedMes.replace(match, '');
+                hasFoundAny = true;
+            }
+        }
+
+        if (imagesToWrap.length > 0) {
             const imageBlock = allBlocks.find(b => (b.block_type ?? BlockType.GENERATED) === BlockType.GENERATED);
             if (imageBlock) {
-                const imgMatch = modifiedMes.trim().match(/\[IMG:(?:GEN:)?([^\]]+)\]/i)[0];
-                const wrapped = `<${imageBlock.name}>${imgMatch}</${imageBlock.name}>`;
+                const combinedImages = imagesToWrap.join('\n');
+                const wrapped = `<${imageBlock.name}>\n${combinedImages}\n</${imageBlock.name}>`;
                 blocksStr += (blocksStr === '' ? wrapped : `\n${wrapped}`);
-                modifiedMes = modifiedMes.replace(imgMatch, '');
-                hasFoundAny = true;
             }
         }
 
         if (hasFoundAny) {
             message.mes = modifiedMes.trim();
-            
+
             // Sync with swipes if necessary
             if (message.swipe_id !== undefined && message.swipes) {
                 message.swipes[message.swipe_id] = message.mes;
@@ -688,8 +742,8 @@ export const BlockService = {
             return true;
         }
 
-        // Always ensure rendering is updated if we have something in extblocks
-        if (message.extra?.extblocks) {
+        // Always ensure rendering is updated if we have something stored
+        if (readStore(message.extra)) {
             await this.updateBlocksDisplay(messageId);
         }
 

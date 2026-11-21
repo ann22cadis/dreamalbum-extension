@@ -71,3 +71,14 @@ export function removeAfterLastNewline(str) {
 
     return stringToTrim.trimEnd();
 }
+
+/**
+ * Collapses every run of whitespace — spaces, tabs, line breaks, non-breaking and
+ * other Unicode spaces, zero-width spaces — into one ordinary space.
+ * @param {string} text
+ * @returns {string}
+ */
+export function squashWhitespace(text) {
+    if (typeof text !== 'string' || !text) return text;
+    return text.replace(/[\s\u200B]+/g, ' ').trim();
+}

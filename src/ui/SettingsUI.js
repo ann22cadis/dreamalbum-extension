@@ -244,7 +244,13 @@ export const SettingsUI = {
             const popupResult = await callPopup(storageEditorHtml, 'confirm', undefined, { okButton: 'Save', wide: true });
             if (popupResult) {
                 await BlockService.purgeBlocksExtra(messageId, true);
-                await BlockService.addBlocksToExtra(messageId, storageEditorHtml.find('.DreamAlbum-storage').val());
+                // The editor shows the stored markup verbatim, so save it back verbatim:
+                // a tag the user renamed is still a block, not raw text to be wrapped.
+                await BlockService.addBlocksToExtra(
+                    messageId,
+                    storageEditorHtml.find('.DreamAlbum-storage').val(),
+                    { wrapUnknownTags: false }
+                );
             }
         });
 

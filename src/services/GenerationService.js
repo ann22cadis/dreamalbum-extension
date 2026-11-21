@@ -4,6 +4,8 @@ import { PluginRegistry } from '../core/PluginRegistry.js';
 import { BlockService } from './BlockService.js';
 import { ApiService } from './ApiService.js';
 import { stringToRegex } from '../utils/stringUtils.js';
+import { readStore } from '../utils/messageStore.js';
+import { ContextService } from './ContextService.js';
 const { chat } = SillyTavern.getContext();
 export const GenerationService = {
     /**
@@ -199,22 +201,24 @@ export const GenerationService = {
             .slice(-maxContext)
             .map(m => {
                 let text = `${m.is_user ? 'User' : 'Character'}: ${m.mes}`;
-                if (preset.include_previous_blocks && m.extra?.extblocks) {
-                    text += `\n[Previously Generated Blocks:\n${m.extra.extblocks.trim()}\n]`;
+                const prevStore = readStore(m.extra);
+                if (preset.include_previous_blocks && prevStore) {
+                    text += `\n[Previously Generated Blocks:\n${prevStore.trim()}\n]`;
                 }
-                return text;
+                // Compacted per message, so messages stay on separate lines.
+                return ContextService.compactContext(text);
             })
             .join('\n');
         const systemMessage = {
             role: 'system',
-            content: `GLOBAL CONTEXT:\n${systemContent}\nCHAT HISTORY:\n${lastMessages}`
+            content: `GLOBAL CONTEXT:\n${ContextService.compactContext(systemContent)}\nCHAT HISTORY:\n${lastMessages}`
         };
         fullContext.unshift(systemMessage);
 
         if (additionalPrompt && additionalPrompt.trim() !== '') {
             fullContext.push({
                 role: 'user',
-                content: `[User instruction: ${additionalPrompt.trim()}]`
+                content: `[OOC: the user's one-off instruction for this generation — follow it: ${additionalPrompt.trim()}]`
             });
         }
 

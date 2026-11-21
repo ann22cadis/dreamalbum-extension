@@ -1,32 +1,46 @@
 <div class="DA-sub-panel" id="DA-style-editor-panel">
     <div class="DA-sub-header">
-        <span class="DA-sub-title"><i class="fa-solid fa-pen-to-square"></i> Редактор стиля</span>
-        <button class="DA-icon-btn" id="DA-style-editor-close"><i class="fa-solid fa-xmark"></i></button>
+        <span class="DA-sub-title">
+            <i class="fa-solid fa-pen-to-square"></i> Редактор стиля
+            <span id="DA-style-editor-dirty" class="DA-editor-dirty" title="Есть несохранённые изменения" hidden></span>
+        </span>
+        <button class="DA-icon-btn" id="DA-style-editor-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
     </div>
-    <div class="DA-sub-content" style="display:flex; flex-direction:column; gap:14px;">
+    <div class="DA-sub-content DA-style-editor-content">
 
-        <!-- Превью + Название в одну строку -->
-        <div style="display:flex; gap:12px; align-items:center;">
-            <div id="DA-style-editor-img-preview" style="width:68px; height:68px; flex-shrink:0; border-radius:8px; border:1px dashed var(--da-border-light); background:var(--da-surface2); background-size:cover; background-position:center; display:flex; align-items:center; justify-content:center; cursor:pointer;">
-                <i class="fa-solid fa-image" style="color:var(--da-text-muted); opacity:0.5;"></i>
+        <!-- Превью + Название -->
+        <div class="DA-editor-head">
+            <div id="DA-style-editor-img-preview" class="DA-editor-cover" title="Обложка стиля">
+                <i class="fa-solid fa-image"></i>
             </div>
-            <div style="flex:1;">
+            <div class="DA-editor-name">
                 <input type="file" id="DA-style-editor-img-upload" accept="image/*" style="display:none;">
-                <input id="DA-style-editor-name" class="DA-input" type="text" placeholder="Название стиля..." autocomplete="off" style="width:100%;">
+                <label class="DA-label" for="DA-style-editor-name">Название</label>
+                <input id="DA-style-editor-name" class="DA-input" type="text" placeholder="Название стиля..." autocomplete="off" maxlength="80">
+                <div id="DA-style-editor-name-error" class="DA-editor-error" hidden></div>
             </div>
         </div>
 
         <!-- Промпт -->
-        <div style="display:flex; flex-direction:column; gap:6px; flex:1; min-height:0;">
-            <label class="DA-label">Промпт (Системная инструкция)</label>
-            <textarea id="DA-style-editor-prompt" class="DA-input"
-                placeholder="Инструкция для ИИ должна содержать полный промпт с требованием тега img. Без CSS/HTML, только тег <img> с нужными параметрами."
-                style="flex:1; min-height:120px; resize:none; font-family:monospace; font-size:0.75rem; line-height:1.45;"></textarea>
+        <div class="DA-editor-prompt">
+            <div class="DA-editor-prompt-head">
+                <label class="DA-label" for="DA-style-editor-prompt">Промпт (системная инструкция)</label>
+                <!-- Чипы макросов строятся в JS: шаблон проходит через Handlebars, и двойные фигурные скобки он подставил бы сам. -->
+                <div class="DA-editor-macros" role="group" aria-label="Вставить макрос в позицию курсора"></div>
+            </div>
+            <textarea id="DA-style-editor-prompt" class="DA-input DA-editor-textarea" spellcheck="false"
+                ></textarea>
+            <div class="DA-editor-stats" aria-live="polite">
+                <span id="DA-style-editor-stats"></span>
+                <span id="DA-style-editor-warn" class="DA-editor-warn" hidden></span>
+            </div>
         </div>
 
         <!-- Кнопка сохранить -->
-        <button id="DA-style-editor-save" class="DA-footer-btn DA-btn-primary" style="flex:none; width:100%; height:44px; font-weight:600; font-size:0.9rem;">
-            Сохранить стиль
-        </button>
+        <div class="DA-editor-actions">
+            <button id="DA-style-editor-save" class="DA-footer-btn DA-btn-primary" title="Ctrl+S">
+                <i class="fa-solid fa-floppy-disk"></i> <span>Сохранить стиль</span>
+            </button>
+        </div>
     </div>
 </div>

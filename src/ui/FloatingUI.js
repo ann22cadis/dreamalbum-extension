@@ -3,7 +3,8 @@ import { SettingsService } from '../services/SettingsService.js';
 import { ApiService } from '../services/ApiService.js';
 import { BlockService } from '../services/BlockService.js';
 import { GenerationService } from '../services/GenerationService.js';
-import { ExtTopic, defaultExtPrefix } from '../core/constants.js';
+import { ExtTopic, defaultExtPrefix, FLOATING_GROUP_MAX } from '../core/constants.js';
+import { askOocInstruction } from './OocModal.js';
 const {
     extensionSettings,
     saveSettingsDebounced,
@@ -18,42 +19,71 @@ export const FloatingUI = {
         this._setupObservers();
         this._initialized = true;
     },
-    _setupObservers() {
-        const observer = new MutationObserver((mutations) => {
-            // Ищем элементы, которые могут быть полноэкранным просмотрщиком
-            const fsSelectors = [
-                '.lightbox', '.fullscreen', '#slay_lightbox', '.ngy2_lightbox', 
-                '[id*="lightbox"]', '[class*="fullscreen"]', '#DA-fullscreen-viewer',
-                '#img-preview-container', '.pswp--open', '.nGY2On', '.nGY2_body_scrollbar'
-            ];
-            
-            const fsElements = document.querySelectorAll(fsSelectors.join(', '));
-            let isFsActive = document.body.classList.contains('nGY2On') || 
-                            document.body.classList.contains('nGY2_body_scrollbar') ||
-                            document.body.classList.contains('pswp--open');
-            
-            if (!isFsActive) {
-                for (const el of fsElements) {
-                    const style = window.getComputedStyle(el);
-                    if (style.display !== 'none' && style.visibility !== 'hidden' && el.offsetHeight > 0) {
-                        isFsActive = true;
-                        break;
-                    }
-                }
+    /** Selectors that could be a third-party fullscreen viewer. */
+    _fsSelectors: [
+        '.lightbox', '.fullscreen', '#slay_lightbox', '.ngy2_lightbox',
+        '[id*="lightbox"]', '[class*="fullscreen"]', '#DA-fullscreen-viewer',
+        '#img-preview-container', '.pswp--open', '.nGY2On', '.nGY2_body_scrollbar'
+    ],
+
+    /** Body classes that mean a viewer is open without any element query. */
+    _fsBodyClasses: ['nGY2On', 'nGY2_body_scrollbar', 'pswp--open'],
+
+    _isFullscreenActive() {
+        for (const cls of this._fsBodyClasses) {
+            if (document.body.classList.contains(cls)) return true;
+        }
+        // querySelectorAll with attribute-substring selectors plus getComputedStyle
+        // forces layout, so this only ever runs from the throttled callback below.
+        for (const el of document.querySelectorAll(this._fsSelectors.join(', '))) {
+            if (el.offsetHeight <= 0) continue;
+            const style = window.getComputedStyle(el);
+            if (style.display !== 'none' && style.visibility !== 'hidden') return true;
+        }
+        return false;
+    },
+
+    _checkFullscreen() {
+        const isFsActive = this._isFullscreenActive();
+
+        if (isFsActive) {
+            if ($('#DA-floating-container').is(':visible')) {
+                this.hide();
+                this._hiddenByFullscreen = true;
             }
-            
-            if (isFsActive) {
-                if ($('#DA-floating-container').is(':visible')) {
-                    console.log('[DreamAlbum] Fullscreen detected, hiding floating buttons');
-                    this.hide();
-                    this._hiddenByFullscreen = true;
-                }
-            } else if (this._hiddenByFullscreen) {
-                console.log('[DreamAlbum] Fullscreen closed, showing floating buttons');
-                this.show();
-                this._hiddenByFullscreen = false;
+        } else if (this._hiddenByFullscreen) {
+            this.show();
+            this._hiddenByFullscreen = false;
+        }
+    },
+
+    _setupObservers() {
+        // SillyTavern rewrites class/style on chat nodes constantly while streaming.
+        // Coalesce every burst into a single check on the next animation frame, and
+        // ignore mutations inside #chat entirely — a viewer never opens in there.
+        let scheduled = false;
+        const chatEl = document.getElementById('chat');
+
+        const schedule = () => {
+            if (scheduled) return;
+            scheduled = true;
+            requestAnimationFrame(() => {
+                scheduled = false;
+                this._checkFullscreen();
+            });
+        };
+
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                const target = mutation.target;
+                if (!(target instanceof Node)) continue;
+                if (chatEl && chatEl.contains(target)) continue;
+                if (target.nodeType === Node.ELEMENT_NODE && target.closest('#DA-floating-container')) continue;
+                schedule();
+                return;
             }
         });
+
         observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
     },
     hide() {
@@ -65,13 +95,16 @@ export const FloatingUI = {
         $el.show();
     },
     render() {
+        $('#DA-floating-container').find('.DA-floating-group').each((_, g) => $(g).data('daCloseTray')?.());
         $('#DA-floating-container').remove();
         
         if (!extensionSettings.DreamAlbum.dreamalbum_is_enabled || !extensionSettings.DreamAlbum.floating_buttons_enabled) {
             return;
         }
         const styles = extensionSettings.DreamAlbum.floating_buttons_styles || [];
-        if (styles.length === 0) return;
+        const groupStyles = (extensionSettings.DreamAlbum.floating_group_styles || []).slice(0, FLOATING_GROUP_MAX);
+        const wantsMoodtube = !!extensionSettings.DreamAlbum.moodtube_link;
+        if (styles.length === 0 && groupStyles.length === 0 && !wantsMoodtube) return;
         
         let savedPos = { left: window.innerWidth - 80, top: window.innerHeight - 250 };
         try {
@@ -79,24 +112,25 @@ export const FloatingUI = {
             if (stored) savedPos = JSON.parse(stored);
         } catch(e) {}
         
-        savedPos.left = Math.max(0, Math.min(savedPos.left, window.innerWidth - 60));
-        savedPos.top = Math.max(0, Math.min(savedPos.top, window.innerHeight - 60));
-        
         const $container = $(`
             <div id="DA-floating-container" class="DA-floating-wrap" style="left: ${savedPos.left}px; top: ${savedPos.top}px; right: auto !important; bottom: auto !important; z-index: 15000 !important; touch-action: none;">
                 <div class="DA-floating-window"></div>
             </div>
         `);
-        styles.forEach(setName => {
-            const set = extensionSettings.DreamAlbum.sets.find(s => s.name === setName);
-            if (!set) return;
+        /**
+         * Builds a style button: tap generates, long press asks for an instruction.
+         * @param {Object} set
+         * @param {string} [extraClass] Extra class, used to mark tray buttons.
+         * @param {Function} [onActivate] Runs before generation, e.g. to close the tray.
+         */
+        const buildStyleButton = (set, extraClass = '', onActivate = null) => {
             const bgStyle = set.image ? `background-image: url('${set.image.replace(/'/g, "\\'")}');` : '';
             const $btn = $(`
-                <div class="DA-floating-btn" title="Сгенерировать: ${set.name}" style="${bgStyle}">
+                <div class="DA-floating-btn ${extraClass}" title="Сгенерировать: ${set.name}" style="${bgStyle}">
                     ${!set.image ? `<i class="fa-solid fa-wand-sparkles"></i>` : ''}
                 </div>
             `);
-            
+
             let pressTimer = null;
             let isLongPress = false;
             let startX = 0, startY = 0;
@@ -147,10 +181,22 @@ export const FloatingUI = {
                     isLongPress = false;
                     return;
                 }
+                if (onActivate) onActivate();
                 await this.triggerGeneration(set, $btn);
             });
-            $container.find('.DA-floating-window').append($btn);
+
+            return $btn;
+        };
+
+        styles.forEach(setName => {
+            const set = extensionSettings.DreamAlbum.sets.find(s => s.name === setName);
+            if (!set) return;
+            $container.find('.DA-floating-window').append(buildStyleButton(set));
         });
+
+        if (groupStyles.length > 0) {
+            $container.find('.DA-floating-window').append(this._buildGroup(groupStyles, buildStyleButton));
+        }
 
         if (extensionSettings.DreamAlbum.moodtube_link) {
             const $mtPlaceholder = $(`
@@ -162,10 +208,112 @@ export const FloatingUI = {
         }
 
         $('body').append($container);
-        
-        
+
+        // Clamp only once the stack is in the DOM: its height depends on how many
+        // buttons were added, and the old fixed 60px guess let a taller column —
+        // extra styles, the group button, MoodTube — hang off the bottom edge.
+        this._clampIntoViewport($container[0]);
+        $(window).off('resize.dafloat').on('resize.dafloat', () => {
+            const el = document.getElementById('DA-floating-container');
+            if (el) this._clampIntoViewport(el);
+        });
+
         this.setupDrag($container[0]);
     },
+
+    /**
+     * Keeps the dock fully on screen, measuring what it actually occupies.
+     * @param {HTMLElement} el
+     */
+    _clampIntoViewport(el) {
+        const margin = 8;
+        const width = el.offsetWidth;
+        const height = el.offsetHeight;
+
+        const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+        const maxTop = Math.max(margin, window.innerHeight - height - margin);
+
+        const left = Math.max(margin, Math.min(parseFloat(el.style.left) || 0, maxLeft));
+        const top = Math.max(margin, Math.min(parseFloat(el.style.top) || 0, maxTop));
+
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+    },
+    /**
+     * Builds the expanding group button: one dock button that opens a sideways tray
+     * holding the user's chosen styles.
+     * @param {string[]} groupStyles Style names, already capped to FLOATING_GROUP_MAX.
+     * @param {Function} buildStyleButton Factory shared with the plain floating buttons.
+     * @returns {jQuery}
+     */
+    _buildGroup(groupStyles, buildStyleButton) {
+        const $group = $(`
+            <div class="DA-floating-group">
+                <div class="DA-floating-btn DA-floating-group-btn" title="Стили (${groupStyles.length})">
+                    <i class="fa-solid fa-layer-group"></i>
+                </div>
+                <div class="DA-floating-group-tray" aria-hidden="true"></div>
+            </div>
+        `);
+
+        const $btn = $group.find('.DA-floating-group-btn');
+        const $tray = $group.find('.DA-floating-group-tray');
+
+        const close = () => {
+            if (!$group.hasClass('DA-group-open')) return;
+            $group.removeClass('DA-group-open');
+            $tray.attr('aria-hidden', 'true');
+            $(document).off('.dagroup');
+        };
+
+        /**
+         * Opens towards whichever side has room. The container is draggable, so the
+         * side is decided at open time, not when the button was built.
+         */
+        const open = () => {
+            const rect = $btn[0].getBoundingClientRect();
+            const needed = $tray[0].scrollWidth || (groupStyles.length * 48);
+            const gap = 16;
+            const roomRight = window.innerWidth - rect.right - gap;
+            const roomLeft = rect.left - gap;
+            // Prefer the roomier side, and only insist on a side that actually fits.
+            const openLeft = roomRight < needed && roomLeft > roomRight;
+
+            $group.toggleClass('DA-group-left', openLeft);
+            $group.toggleClass('DA-group-right', !openLeft);
+            $group.addClass('DA-group-open');
+            $tray.attr('aria-hidden', 'false');
+
+            // Bound to document so a tap anywhere else dismisses the tray.
+            $(document).on('mousedown.dagroup touchstart.dagroup', (e) => {
+                if ($(e.target).closest('.DA-floating-group').length) return;
+                close();
+            });
+            $(document).on('keydown.dagroup', (e) => {
+                if (e.key === 'Escape') close();
+            });
+        };
+
+        $group.data('daCloseTray', close);
+
+        $btn.on('click', (e) => {
+            e.stopPropagation();
+            if ($group.hasClass('DA-group-open')) close();
+            else open();
+        });
+
+        groupStyles.forEach(setName => {
+            const set = extensionSettings.DreamAlbum.sets.find(s => s.name === setName);
+            if (!set) return;
+            $tray.append(buildStyleButton(set, 'DA-tray-btn', close));
+        });
+
+        // Nothing resolved to a real style — do not leave an empty tray behind.
+        if ($tray.children().length === 0) return $();
+
+        return $group;
+    },
+
     setupDrag(el) {
         let isDragging = false;
         let startX, startY, initialLeft, initialTop;
@@ -198,8 +346,10 @@ export const FloatingUI = {
             
             
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
-            
+
             if (isDragging) {
+                // The tray picked its side from the old position; drop it.
+                $(el).find('.DA-floating-group').each((_, g) => $(g).data('daCloseTray')?.());
                 
                 if (e.cancelable) e.preventDefault();
                 
@@ -267,40 +417,10 @@ export const FloatingUI = {
             }
         }, true);
     },
-    openInstructionModal(set, $btn) {
-        const $overlay = $(`
-            <div class="DA-confirm-wrapper" style="z-index: 3000000 !important; display: flex; align-items: center; justify-content: center; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);">
-                <div class="DA-confirm-box" style="width: 90%; max-width: 400px; background: var(--da-bg); border: 1px solid var(--da-border); border-radius: var(--da-radius-panel); padding: 20px; box-shadow: var(--da-shadow); color: var(--da-text);">
-                    <div class="DA-confirm-text" style="font-weight: 600; font-size: 1.1rem; margin-bottom: 10px;">
-                        Пожелание к генерации: <span style="color: var(--da-accent);">${set.name}</span>
-                    </div>
-                    <div style="font-size: 0.85rem; opacity: 0.8; margin-bottom: 15px; text-align: left; line-height: 1.3;">
-                        Введите инструкцию, которую ИИ должен учесть.
-                    </div>
-                    <textarea class="DA-input" id="DA-instruction-input" rows="3" placeholder="Ваше пожелание..." style="width: 100%; margin-bottom: 20px; resize: none; background: var(--da-surface); border: 1px solid var(--da-border); color: var(--da-text); padding: 10px; border-radius: 8px; font-family: inherit; font-size: 0.95rem; box-sizing: border-box; overflow-y: hidden; min-height: 80px;" oninput="this.style.height = ''; this.style.height = Math.min(this.scrollHeight, 250) + 'px'; this.style.overflowY = this.scrollHeight > 250 ? 'auto' : 'hidden';"></textarea>
-                    <div class="DA-confirm-actions" style="display: flex; gap: 10px; justify-content: flex-end;">
-                        <button class="DA-btn-confirm" id="DA-inst-cancel" style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--da-border); background: var(--da-surface2); color: var(--da-text); cursor: pointer;">Отмена</button>
-                        <button class="DA-btn-confirm" id="DA-inst-generate" style="flex: 1; padding: 10px; border-radius: 8px; border: none; background: var(--da-accent); color: white; cursor: pointer; font-weight: bold;">Сгенерировать</button>
-                    </div>
-                </div>
-            </div>
-        `);
-
-        $('body').append($overlay);
-        $overlay.find('#DA-instruction-input').focus();
-
-        $overlay.find('#DA-inst-cancel').on('click', () => {
-            $overlay.remove();
-        });
-
-        $overlay.find('#DA-inst-generate').on('click', async () => {
-            let instruction = $overlay.find('#DA-instruction-input').val();
-            if (instruction) {
-                instruction = instruction.replace(/'/g, "&apos;");
-            }
-            $overlay.remove();
-            await this.triggerGeneration(set, $btn, instruction);
-        });
+    async openInstructionModal(set, $btn) {
+        const instruction = await askOocInstruction({ styleName: set.name });
+        if (instruction === null) return;
+        await this.triggerGeneration(set, $btn, instruction);
     },
     async triggerGeneration(set, $activeBtn, instruction = null) {
         const ctx = SillyTavern.getContext();
@@ -355,7 +475,7 @@ export const FloatingUI = {
     },
     
     triggerSuccessAnimation() {
-        const $btns = $('#DA-floating-container .DA-floating-btn:not(#DA-moodtube-placeholder)');
+        const $btns = $('#DA-floating-container .DA-floating-btn:not(#DA-moodtube-placeholder):not(.DA-tray-btn)');
         let $activeBtn = $btns.first();
         
         if ($activeBtn.length === 0) {

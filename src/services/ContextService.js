@@ -2,6 +2,8 @@ import { getRegexedString } from '../../../../../extensions/regex/engine.js'
 import { extStates } from '../core/state.js';
 import { ContextType, MessageRole } from '../core/constants.js';
 import { getBlockFromMessage } from '../utils/blockUtils.js';
+import { readStore } from '../utils/messageStore.js';
+import { squashWhitespace } from '../utils/stringUtils.js';
 
 const { 
     substituteParams, 
@@ -9,6 +11,19 @@ const {
 } = SillyTavern.getContext();
 
 export const ContextService = {
+    /**
+     * Applies the "compress whitespace" toggle to a piece of request context: a
+     * character card, persona, lorebook, chat history or earlier blocks. Style and
+     * block instructions never go through here, so their line-based formatting
+     * rules reach the model intact.
+     * @param {string} text
+     * @returns {string}
+     */
+    compactContext(text) {
+        const enabled = SillyTavern.getContext().extensionSettings?.DreamAlbum?.compress_context_whitespace;
+        return enabled ? squashWhitespace(text) : text;
+    },
+
     /**
      * Gets the combined context for a block.
      */
@@ -39,7 +54,9 @@ export const ContextService = {
                     flushCurrent();
                     currentRole = role;
                 }
-                currentContent.push(content);
+                // Free-text items are instructions the block author wrote; only
+                // chat-derived context is compacted.
+                currentContent.push(context_item.type === ContextType.TEXT ? content : this.compactContext(content));
             });
         }
 
@@ -130,8 +147,9 @@ export const ContextService = {
             const depth = messages_count - index - 1;
             
             let text = `${prefix}${getRegexedString(message.mes.trim(), placement, {depth: depth, isPrompt: true})}${suffix}`;
-            if (includeBlocks && message.extra?.extblocks) {
-                text += `\n[Previously Generated Blocks:\n${message.extra.extblocks.trim()}\n]`;
+            const blocksStore = readStore(message.extra);
+            if (includeBlocks && blocksStore) {
+                text += `\n[Previously Generated Blocks:\n${blocksStore.trim()}\n]`;
             }
             return text;
         }).join(separator);
@@ -162,8 +180,9 @@ export const ContextService = {
 
         for (let i = startId; i >= 0 && blocks.length < count; i--) {
             const message = chat[i];
-            if (message.extra?.extblocks) {
-                const blockContent = getBlockFromMessage(message.extra.extblocks, block.name);
+            const store = readStore(message.extra);
+            if (store) {
+                const blockContent = getBlockFromMessage(store, block.name);
                 if (blockContent !== '') {
                     blocks.push(blockContent);
                 }

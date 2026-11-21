@@ -727,7 +727,13 @@ input.disable_DreamAlbum {
     border: none !important;
 }
 #DreamAlbum-panel .DA-btn-primary:hover {
-    background: var(--da-accent-hover) !important;
+    /* The .DA-footer-btn:hover rule above paints the label with --da-accent-hover.
+       Filling the background with that same variable made the text disappear.
+       Keep the accent fill, darken it, and restate the white label: contrast then
+       improves on hover instead of collapsing, and it holds in every theme. */
+    background: var(--da-accent) !important;
+    color: #fff !important;
+    filter: brightness(0.9);
 }
 
 #DreamAlbum-panel .DA-btn-secondary {
@@ -783,16 +789,15 @@ body.DA-no-select {
     height: 100dvh !important;
     min-height: 100dvh !important;
     max-height: 100dvh !important;
-    background: rgba(0, 0, 0, 0.75) !important;
-    backdrop-filter: blur(10px);
+    background: var(--da-bg) !important;
     z-index: 999998 !important;
     opacity: 1 !important;
     transition: none !important;
-    
-    /* Centering wrapper */
-    align-items: center;
-    justify-content: center;
-    padding: 18px;
+
+    /* The panel fills the whole screen, so the backdrop is only a mount point. */
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
     box-sizing: border-box !important;
     pointer-events: none;
 }
@@ -802,34 +807,18 @@ body.DA-no-select {
     visibility: visible !important;
 }
 
-#DA-album-container {
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 90vw;
-    max-width: 1000px;
-    height: 85vh;
-    background: var(--da-bg);
-    border: 1px solid var(--da-border);
-    border-radius: var(--da-radius-panel);
-    box-shadow: var(--da-shadow);
-    z-index: 999000;
-    overflow: hidden;
-}
-
 #DreamAlbum-panel {
     position: relative;
-    width: 92%;
-    max-width: 440px;
-    height: min(82dvh, 720px);
-    max-height: 100%;
+    width: 100%;
+    height: 100%;
     background: var(--da-bg);
-    border: 1px solid var(--da-border);
-    border-radius: var(--da-radius-panel);
-    box-shadow: var(--da-shadow);
-    margin: auto;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    margin: 0;
+    /* Keep controls clear of notches and home indicators. */
+    padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1049,7 +1038,7 @@ body.DA-no-select {
 /* ── Image Grid ── */
 #DA-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 10px;
 }
 
@@ -1207,7 +1196,7 @@ body.DA-no-select {
     background: var(--da-accent);
     color: #fff;
 }
-.DA-btn-primary:hover { background: var(--da-accent-hover); }
+.DA-btn-primary:hover { background: var(--da-accent); color: #fff; filter: brightness(0.9); }
 
 .DA-btn-secondary {
     background: var(--da-surface2);
@@ -1332,7 +1321,7 @@ body.DA-no-select {
 /* ── Style Picker ── */
 .DA-style-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
     max-height: 100%;
     overflow-y: auto;
@@ -1350,9 +1339,6 @@ body.DA-no-select {
     z-index: 10;
     overflow: hidden;
     animation: DA-slide-up 0.25s ease-out;
-}
-.DA-sub-panel.DA-active {
-    display: flex;
 }
 .DA-sub-content {
     flex: 1;
@@ -1375,11 +1361,6 @@ body.DA-no-select {
     font-size: 0.95rem;
     font-weight: 600;
     color: var(--da-accent);
-}
-.DA-sub-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
 }
 .DA-style-item {
     display: flex;
@@ -1586,19 +1567,9 @@ body.DA-no-select {
 
 /* ── Mobile (<= 768px) ── */
 @media (max-width: 768px) {
-    #DreamAlbum-backdrop {
-        padding: 12px;
-    }
-    #DreamAlbum-panel {
-        max-height: 94dvh !important;
-        transform: scale(0.9);
-    }
-    #DreamAlbum-backdrop.DA-visible #DreamAlbum-panel {
-        transform: scale(1) !important;
-    }
     #DA-grid, .DA-style-grid {
-        grid-template-columns: repeat(2, 1fr) !important;
-        gap: 12px !important;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
     }
     .DA-footer-btn {
         height: 46px;
@@ -1975,6 +1946,97 @@ body.DA-no-select {
     transform: scale(0.95);
 }
 
+/* --- Expanding style group ------------------------------------------------
+   One dock button that opens a sideways tray of styles. The side is decided in
+   JS at open time, because the dock is draggable. */
+.DA-floating-group {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.DA-floating-group-btn i {
+    transition: transform 0.25s ease;
+}
+
+.DA-floating-group.DA-group-open .DA-floating-group-btn {
+    border-color: var(--da-accent-hover);
+    box-shadow: 0 0 18px var(--da-accent);
+}
+
+.DA-floating-group.DA-group-open .DA-floating-group-btn i {
+    transform: rotate(90deg);
+}
+
+.DA-floating-group-tray {
+    position: absolute;
+    top: 50%;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px;
+    background: var(--da-overlay);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--da-border);
+    border-radius: 28px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    /* The containing block is the 48px dock button, so shrink-to-fit would wrap every
+       style onto its own row. Size to the content and clamp against the screen. */
+    width: max-content;
+    max-width: calc(100vw - 80px);
+    z-index: 5;
+    /* Hidden with visibility, not display, so its width stays measurable and the
+       open direction can be computed before the first open. Visibility is a discrete
+       property: transitioning it would flip halfway through the fade, so it is
+       switched instantly on open and only delayed on close. */
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%) scale(0.8);
+    transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), visibility 0s linear 0.22s;
+}
+
+.DA-floating-group.DA-group-right .DA-floating-group-tray {
+    left: calc(100% + 12px);
+    transform-origin: left center;
+}
+
+.DA-floating-group.DA-group-left .DA-floating-group-tray {
+    right: calc(100% + 12px);
+    transform-origin: right center;
+}
+
+.DA-floating-group.DA-group-open .DA-floating-group-tray {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(-50%) scale(1);
+    transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), visibility 0s linear 0s;
+}
+
+.DA-floating-btn.DA-tray-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 1rem;
+    flex: 0 0 auto;
+}
+
+@media (max-width: 420px) {
+    .DA-floating-group-tray {
+        gap: 6px;
+        padding: 6px;
+        max-width: calc(100vw - 72px);
+    }
+
+    .DA-floating-btn.DA-tray-btn {
+        width: 36px;
+        height: 36px;
+    }
+}
+
 .DA-floating-btn.DA-is-generating {
     cursor: wait !important;
     pointer-events: none;
@@ -2101,17 +2163,59 @@ body.DA-no-select {
     justify-content: center;
     padding: 20px;
     box-sizing: border-box;
+    /* A zoomed image is larger than the viewport; clip it instead of scrolling. */
+    overflow: hidden;
 }
 
 .DA-fullscreen-img {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     border-radius: var(--da-radius-img);
+}
+
+/* ── Zoomable images (ZoomController) ─────────────────────────────────────────
+   Shared by the fullscreen viewer and the album's "Просмотр" panel. */
+.DA-zoomable {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
+    /* Own every gesture: the browser must not pan or pinch the page instead. */
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    cursor: zoom-in;
+}
+
+/* Wheel, drag and pinch update the transform every frame — easing would lag. */
+.DA-zoomable.DA-zoom-instant {
+    transition: none !important;
+}
+
+.DA-zoomable.DA-zoom-zoomed {
+    cursor: grab;
+}
+
+.DA-zoomable.DA-zoom-dragging {
+    cursor: grabbing;
+}
+
+.DA-fs-zoom-level:empty {
+    display: none !important;
+}
+
+.DA-fs-zoom-level {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0.8rem !important;
+    font-variant-numeric: tabular-nums;
+    color: var(--da-accent) !important;
+    white-space: nowrap;
+    min-width: 44px !important;
+    padding: 0 4px !important;
 }
 
 .DA-fs-btn {
@@ -2141,6 +2245,30 @@ body.DA-no-select {
 
 .DA-fs-btn i {
     color: inherit !important;
+}
+
+/* Six buttons plus the zoom badge do not fit a narrow phone at full size, and the
+   header is right-anchored, so it would slide off the left edge instead of wrapping. */
+@media (max-width: 420px) {
+    .DA-fullscreen-header {
+        top: 12px !important;
+        right: 12px !important;
+        left: 12px !important;
+        justify-content: flex-end !important;
+        gap: 4px !important;
+        padding: 6px !important;
+    }
+
+    .DA-fs-btn {
+        width: 32px !important;
+        height: 32px !important;
+        font-size: 0.9rem !important;
+    }
+
+    .DA-fs-zoom-level {
+        min-width: 38px !important;
+        font-size: 0.7rem !important;
+    }
 }
 
 
@@ -2235,3 +2363,340 @@ body.DA-no-select {
     border-color: var(--da-danger) !important;
 }
 
+
+
+/* ── Fullscreen layout ───────────────────────────────────────────────────────
+   The panel spans the whole viewport. On wide screens, form-like content stays at
+   a readable width instead of stretching edge to edge. */
+.DA-sub-panel > .DA-sub-content {
+    width: 100%;
+    max-width: 960px;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.DA-footer {
+    justify-content: center;
+}
+
+.DA-footer-btn {
+    max-width: 420px;
+}
+
+/* ── Create button: hold for an OOC instruction ─────────────────────────────── */
+#DA-create-btn {
+    position: relative;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+}
+
+/* The bar fills over the hold time (keep in step with HOLD_MS in AlbumUI). */
+#DA-create-btn::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    width: 0;
+    background: rgba(255, 255, 255, 0.85);
+    pointer-events: none;
+}
+
+#DA-create-btn.DA-holding::after {
+    width: 100%;
+    transition: width 0.5s linear;
+}
+
+/* ── OOC instruction dialog ─────────────────────────────────────────────────── */
+.DA-ooc-box {
+    max-width: 440px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.DA-ooc-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--da-text);
+}
+
+.DA-ooc-title i {
+    color: var(--da-accent);
+}
+
+.DA-ooc-style {
+    font-size: 0.85rem;
+    color: var(--da-text-muted);
+}
+
+.DA-ooc-style-name {
+    color: var(--da-accent);
+    font-weight: 500;
+}
+
+.DA-ooc-hint {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--da-text-muted);
+    opacity: 0.85;
+}
+
+.DA-ooc-input {
+    background: var(--da-surface) !important;
+    color: var(--da-text) !important;
+    height: auto !important;
+    min-height: 84px;
+    resize: none;
+    padding: 10px !important;
+    font-family: inherit;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    overflow-y: hidden;
+}
+
+.DA-ooc-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.DA-ooc-actions .DA-btn-confirm {
+    flex: 1;
+    padding: 10px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.DA-ooc-actions .DA-ooc-cancel {
+    background: var(--da-surface2) !important;
+    border: 1px solid var(--da-border-light) !important;
+    color: var(--da-text) !important;
+}
+
+.DA-ooc-actions .DA-ooc-cancel:hover {
+    border-color: var(--da-accent) !important;
+    color: var(--da-accent-hover) !important;
+}
+
+.DA-ooc-actions .DA-ooc-submit {
+    background: var(--da-accent) !important;
+    border-color: transparent !important;
+    color: #fff !important;
+    font-weight: 600;
+}
+
+.DA-ooc-keys {
+    font-size: 0.7rem;
+    color: var(--da-text-muted);
+    opacity: 0.6;
+    text-align: center;
+}
+
+@media (hover: none) {
+    .DA-ooc-keys {
+        display: none;
+    }
+}
+
+/* ── Style editor ───────────────────────────────────────────────────────────── */
+.DA-style-editor-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+}
+
+.DA-editor-head {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+}
+
+.DA-editor-cover {
+    width: 76px;
+    height: 76px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    border: 1px dashed var(--da-border-light);
+    background: var(--da-surface2);
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color var(--da-transition);
+}
+
+.DA-editor-cover:hover {
+    border-color: var(--da-accent);
+}
+
+.DA-editor-cover i {
+    color: var(--da-text-muted);
+    opacity: 0.5;
+}
+
+.DA-editor-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.DA-editor-error {
+    font-size: 0.78rem;
+    color: #e07a7a;
+}
+
+.DA-input.DA-input-invalid {
+    border-color: #e07a7a !important;
+}
+
+.DA-editor-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-height: 0;
+}
+
+.DA-editor-prompt-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.DA-editor-macros {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.DA-macro-chip {
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--da-border-light);
+    background: var(--da-surface2);
+    color: var(--da-text-muted);
+    font-family: monospace;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: border-color var(--da-transition), color var(--da-transition), background var(--da-transition);
+}
+
+.DA-macro-chip:hover,
+.DA-macro-chip:focus-visible {
+    border-color: var(--da-accent);
+    color: var(--da-accent-hover);
+    background: var(--da-accent-dim);
+    outline: none;
+}
+
+.DA-editor-textarea {
+    flex: 1;
+    min-height: 220px;
+    height: auto !important;
+    resize: vertical;
+    padding: 12px !important;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    tab-size: 4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.DA-editor-stats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 4px 12px;
+    font-size: 0.75rem;
+    color: var(--da-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.DA-editor-warn {
+    color: #e0a860;
+}
+
+.DA-editor-dirty {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--da-accent);
+    vertical-align: middle;
+}
+
+/* `hidden` must win over the display rules above. */
+.DA-editor-dirty[hidden],
+.DA-editor-error[hidden],
+.DA-editor-warn[hidden] {
+    display: none !important;
+}
+
+.DA-editor-actions {
+    position: sticky;
+    bottom: 0;
+    padding-top: 8px;
+    margin-top: auto;
+    background: linear-gradient(to bottom, transparent, var(--da-bg) 40%);
+}
+
+.DA-editor-actions .DA-footer-btn {
+    width: 100%;
+    max-width: none;
+    height: 46px;
+    font-weight: 600;
+}
+
+/* Native title attribute is not shown on touch; keep the dialog out of the way there. */
+@media (max-width: 480px) {
+    .DA-style-editor-content {
+        padding: 12px;
+    }
+    .DA-editor-cover {
+        width: 64px;
+        height: 64px;
+    }
+}
+
+/* ── "Просмотр" panel zoom ──────────────────────────────────────────────────── */
+/* A pinch may start on the empty area around the image, not just on it. */
+.DA-viewer-img-container {
+    touch-action: none;
+}
+
+/* While zoomed, the prev/next edge zones would swallow pans that start there. */
+.DA-viewer-img-container.DA-zoom-active .DA-viewer-nav {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.DA-viewer-zoom-level {
+    width: auto !important;
+    min-width: 44px;
+    padding: 0 8px !important;
+    font-size: 0.75rem !important;
+    font-variant-numeric: tabular-nums;
+    color: var(--da-accent) !important;
+}
+
+.DA-viewer-zoom-level[hidden] {
+    display: none !important;
+}

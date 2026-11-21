@@ -84,6 +84,17 @@
                     <select id="DA-floating-style-2" class="DA-select"><option value="">-- Нет --</option></select>
                     <select id="DA-floating-style-3" class="DA-select"><option value="">-- Нет --</option></select>
                 </div>
+
+                <div id="DA-floating-group-container" style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--da-border);">
+                    <label class="DA-label" title="Одна дополнительная кнопка, которая раскрывается вбок и показывает выбранные стили. Сторона выбирается сама, по положению кнопки на экране.">
+                        Кнопка-группа &mdash; до 5 стилей:
+                    </label>
+                    <select id="DA-floating-group-1" class="DA-select"><option value="">-- Нет --</option></select>
+                    <select id="DA-floating-group-2" class="DA-select"><option value="">-- Нет --</option></select>
+                    <select id="DA-floating-group-3" class="DA-select"><option value="">-- Нет --</option></select>
+                    <select id="DA-floating-group-4" class="DA-select"><option value="">-- Нет --</option></select>
+                    <select id="DA-floating-group-5" class="DA-select"><option value="">-- Нет --</option></select>
+                </div>
                 <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--da-border);">
                     <label class="DA-toggle-label" style="display: flex; align-items: center; gap: 8px;">
                         <input id="DA-moodtube-link" type="checkbox" class="DA-checkbox">
@@ -114,6 +125,13 @@
                         <label class="DA-toggle-label"><input id="DA-btn-show-edit" type="checkbox" class="DA-checkbox"> Редактировать</label>
                         <label class="DA-toggle-label"><input id="DA-btn-show-delete" type="checkbox" class="DA-checkbox"> Удалить</label>
                     </div>
+                </div>
+                
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--da-border);">
+                    <label class="DA-toggle-label" style="display: flex; align-items: center; gap: 8px;" title="Скрывает кнопку редактирования блоков DreamAlbum в сообщениях, чтобы она не дублировала такую же кнопку Ext-blocks. На хранение и отрисовку блоков не влияет — расширения используют раздельные хранилища.">
+                        <input id="DA-extblocks-installed" type="checkbox" class="DA-checkbox">
+                        <span style="color: var(--da-accent);">Установлен Ext-blocks (скрыть дубль кнопки)</span>
+                    </label>
                 </div>
             </div>
 

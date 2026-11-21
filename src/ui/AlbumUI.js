@@ -1,12 +1,15 @@
-import { templates_path, ElementTemplate, ExtTopic } from '../core/constants.js';
+import { templates_path, ElementTemplate, ExtTopic, FLOATING_GROUP_MAX } from '../core/constants.js';
 import { extStates } from '../core/state.js';
 import { SettingsService } from '../services/SettingsService.js';
 import { ApiService } from '../services/ApiService.js';
 import { BlockService } from '../services/BlockService.js';
 import { GenerationService } from '../services/GenerationService.js';
 import { FloatingUI } from './FloatingUI.js';
+import { askOocInstruction } from './OocModal.js';
+import { createZoomController } from './ZoomController.js';
 import { GeneratedEditor } from './editors/GeneratedEditor.js';
-import { updateOrInsert } from '../utils/dataUtils.js';
+import { readStore } from '../utils/messageStore.js';
+import { fileToThumbnail, dataUrlBytes, COVER_MAX_BYTES } from '../utils/imageUtils.js';
 const {
     renderExtensionTemplateAsync,
     extensionSettings,
@@ -114,97 +117,199 @@ export const AlbumUI = {
         this._renderGrid(images);
     },
     
-     _scanChatImages() {
+    /**
+     * Parsed images per message, reused while the message text is unchanged. The
+     * album is re-scanned after every generation and hide, and parsing each
+     * `data-iig-instruction` payload is the costly part of that.
+     * @type {Map<number, {mes: string, store: string, items: Array<{src: string, instruction: Object|null, idx: number}>}>}
+     */
+    _scanCache: new Map(),
+
+    /**
+     * Extracts the generated images from one message.
+     * `idx` counts every instruction tag, including ones without a usable src, so
+     * it stays a stable part of the hide key.
+     */
+    _parseMessageImages(content) {
+        const items = [];
+        const imgRegex = /<img[^>]+data-iig-instruction=(['"])(.*?)\1[^>]*>/gi;
+
+        let match;
+        let idx = 0;
+        while ((match = imgRegex.exec(content)) !== null) {
+            const srcMatch = match[0].match(/src=(['"])(.*?)\1/i);
+            const src = srcMatch ? srcMatch[2] : '';
+
+            if (src && src !== '[IMG:GEN]') {
+                items.push({ src, instruction: this._parseInstruction(match[2]), idx });
+            }
+            idx++;
+        }
+        return items;
+    },
+
+    _parseInstruction(raw) {
+        // Unescape HTML entities if any (like &quot;)
+        const unescapedRaw = raw.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        if (!unescapedRaw) return null;
+
+        try {
+            return JSON.parse(unescapedRaw);
+        } catch (e) {
+            try {
+                return JSON.parse(unescapedRaw.replace(/\n/g, '\\n').replace(/\r/g, ''));
+            } catch (e2) {
+                const promptMatch = unescapedRaw.match(/"prompt"\s*:\s*"(.*?)"/s);
+                const blockMatch = unescapedRaw.match(/"block"\s*:\s*"(.*?)"/s);
+                return promptMatch ? { prompt: promptMatch[1], block: blockMatch ? blockMatch[1] : 'unknown' } : null;
+            }
+        }
+    },
+
+    _scanChatImages() {
         const images = [];
-        const hidden = extStates.DreamAlbum_settings.hidden_items || [];
+        const hidden = new Set(extStates.DreamAlbum_settings.hidden_items || []);
         const chat = SillyTavern.getContext().chat || [];
-        
+
+        // Entries beyond the end belong to a chat that has since been swapped out.
+        if (this._scanCache.size > chat.length) {
+            for (const id of this._scanCache.keys()) {
+                if (id >= chat.length) this._scanCache.delete(id);
+            }
+        }
+
         chat.forEach((message, mesId) => {
-            const contentToScan = (message.mes || '') + '\n' + (message.extra?.extblocks || '');
-            // Match all img tags that have data-iig-instruction attribute
-            const imgRegex = /<img[^>]+data-iig-instruction=(['"])(.*?)\1[^>]*>/gi;
-            
-            let match;
-            let idx = 0;
-            while ((match = imgRegex.exec(contentToScan)) !== null) {
-                // Also extract src
-                const srcMatch = match[0].match(/src=(['"])(.*?)\1/i);
-                const src = srcMatch ? srcMatch[2] : '';
-                
-                if (!src || src === '[IMG:GEN]') {
-                    idx++;
-                    continue;
-                }
-                
+            const mes = message.mes || '';
+            const store = readStore(message.extra);
+
+            let entry = this._scanCache.get(mesId);
+            // Same string references mean unchanged text, so the comparison is cheap.
+            if (!entry || entry.mes !== mes || entry.store !== store) {
+                // Cheap reject first: messages carry inline base64, so running the regex
+                // over every one of them is the expensive part of opening the album.
+                const content = `${mes}
+${store}`;
+                const items = content.indexOf('data-iig-instruction') === -1 ? [] : this._parseMessageImages(content);
+                entry = { mes, store, items };
+                this._scanCache.set(mesId, entry);
+            }
+
+            for (const { src, instruction, idx } of entry.items) {
                 const hideKey = `${mesId}-${idx}`;
-                if (hidden.includes(hideKey)) {
-                    idx++;
-                    continue;
-                }
-                
-                let instruction = null;
-                const raw = match[2];
-                // Try to unescape HTML entities if any (like &quot;)
-                const unescapedRaw = raw.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-                
-                if (unescapedRaw) {
-                    try {
-                        instruction = JSON.parse(unescapedRaw);
-                    } catch(e) {
-                        try {
-                            instruction = JSON.parse(unescapedRaw.replace(/\n/g, '\\n').replace(/\r/g, ''));
-                        } catch(e2) {
-                            const promptMatch = unescapedRaw.match(/"prompt"\s*:\s*"(.*?)"/s);
-                            const blockMatch = unescapedRaw.match(/"block"\s*:\s*"(.*?)"/s);
-                            if (promptMatch) {
-                                instruction = { prompt: promptMatch[1], block: blockMatch ? blockMatch[1] : 'unknown' };
-                            }
-                        }
-                    }
-                }
-                
-                images.push({ src, instruction, mesId, hideKey });
-                idx++;
+                if (!hidden.has(hideKey)) images.push({ src, instruction, mesId, hideKey });
             }
         });
         return images;
     },
-    
+
+    /** Images currently shown in the grid, indexed by each item's data-index. */
+    _gridImages: [],
+
     _renderGrid(images) {
-        const $grid = $('#DA-grid');
+        const grid = document.getElementById('DA-grid');
         const $empty = $('#DA-empty-state');
-        $grid.empty();
+        this._gridImages = images;
         if (images.length === 0) {
+            grid.replaceChildren();
             $empty.show();
-            $grid.hide();
+            $(grid).hide();
             return;
         }
         $empty.hide();
-        $grid.show();
-        images.forEach(({ src, instruction, mesId, hideKey }) => {
-            const prompt = instruction?.prompt ?? '';
-            const style = instruction?.style ?? '';
-            
-            const isError = src.includes('error');
-            const $item = $(`
-                <div class="DA-image-item" data-mesid="${mesId}" data-hidekey="${hideKey}" title="${prompt}">
-                    <img class="DA-image-thumb" src="${src}" loading="lazy" alt="${prompt}" />
-                    <div class="DA-long-press-overlay"><i class="fa-solid fa-eye-slash"></i></div>
-                </div>
-            `);
-            
-            this._setupLongPress($item, () => {
-                this._hideItem(hideKey);
-            });
+        $(grid).show();
 
-            $item.on('click', (e) => {
-                if ($item.data('long-pressed')) {
-                    $item.data('long-pressed', false);
-                    return;
-                }
-                this._openImageViewer(src, prompt, mesId, hideKey);
-            });
-            $grid.append($item);
+        // Built with DOM properties rather than an HTML string: prompts contain quotes
+        // and angle brackets, which broke the old attribute interpolation. One
+        // fragment means one layout pass, and interaction is delegated (see
+        // _bindGridInteractions), so there are no per-item listeners to create.
+        const frag = document.createDocumentFragment();
+        images.forEach(({ src, instruction, mesId, hideKey }, index) => {
+            const prompt = instruction?.prompt ?? '';
+
+            const item = document.createElement('div');
+            item.className = 'DA-image-item';
+            item.dataset.index = String(index);
+            item.dataset.mesid = String(mesId);
+            item.dataset.hidekey = hideKey;
+            item.title = prompt;
+
+            const thumb = document.createElement('img');
+            thumb.className = 'DA-image-thumb';
+            thumb.loading = 'lazy';
+            thumb.decoding = 'async';
+            thumb.alt = prompt;
+            thumb.src = src;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'DA-long-press-overlay';
+            overlay.innerHTML = '<i class="fa-solid fa-eye-slash"></i>';
+
+            item.append(thumb, overlay);
+            frag.append(item);
+        });
+        grid.replaceChildren(frag);
+    },
+
+    /**
+     * Tap opens the viewer, a long press hides the image. Bound once on the grid
+     * container and resolved through event delegation, so re-rendering a long album
+     * never re-attaches handlers.
+     */
+    _bindGridInteractions($grid) {
+        const LONG_PRESS_MS = 400;
+        const MOVE_TOLERANCE = 10;
+        let timer = null;
+        let longFired = false;
+        let startX = 0;
+        let startY = 0;
+
+        const cancel = () => {
+            clearTimeout(timer);
+            timer = null;
+        };
+        const pointOf = (e) => (e.originalEvent?.touches?.[0] ?? e.originalEvent ?? e);
+        const imageOf = (el) => this._gridImages[Number(el.dataset.index)];
+
+        $grid.on('mousedown touchstart', '.DA-image-item', (e) => {
+            if (e.type === 'mousedown' && e.button !== 0) return;
+            const item = e.currentTarget;
+            const point = pointOf(e);
+            startX = point.clientX;
+            startY = point.clientY;
+            longFired = false;
+            cancel();
+            timer = setTimeout(() => {
+                timer = null;
+                longFired = true;
+                const image = imageOf(item);
+                item.classList.add('DA-long-pressing');
+                if (navigator.vibrate) navigator.vibrate(40);
+                // Hiding re-renders the grid; the overlay flashes on the node being removed.
+                if (image) this._hideItem(image.hideKey);
+            }, LONG_PRESS_MS);
+        });
+
+        // A scroll or drag that starts on an image must not turn into a hide.
+        $grid.on('touchmove mousemove', '.DA-image-item', (e) => {
+            if (!timer) return;
+            const point = pointOf(e);
+            if (Math.abs(point.clientX - startX) > MOVE_TOLERANCE || Math.abs(point.clientY - startY) > MOVE_TOLERANCE) {
+                cancel();
+            }
+        });
+        $grid.on('mouseup mouseleave touchend touchcancel', '.DA-image-item', cancel);
+
+        $grid.on('contextmenu', '.DA-image-item', (e) => {
+            if (longFired || timer) e.preventDefault();
+        });
+
+        $grid.on('click', '.DA-image-item', (e) => {
+            if (longFired) {
+                longFired = false;
+                return;
+            }
+            const image = imageOf(e.currentTarget);
+            if (image) this._openImageViewer(image.src, image.instruction?.prompt ?? '', image.mesId, image.hideKey);
         });
     },
 
@@ -249,14 +354,23 @@ export const AlbumUI = {
     
     async _openImageViewer(src, prompt, mesId, hideKey) {
         const $panel = $('#DreamAlbum-panel');
+        // A previous viewer may still hold document-level listeners.
+        this._viewerZoom?.destroy();
+        this._viewerZoom = null;
         $panel.find('#DA-image-viewer-panel').remove();
-        const allImages = $('.DA-image-thumb').map((_, el) => ({ src: $(el).attr('src'), mesId: $(el).closest('.DA-image-item').data('mesid'), hideKey: $(el).closest('.DA-image-item').data('hidekey'), prompt: $(el).closest('.DA-image-item').attr('title') })).get();
+        const allImages = this._gridImages.map(img => ({
+            src: img.src,
+            mesId: img.mesId,
+            hideKey: img.hideKey,
+            prompt: img.instruction?.prompt ?? ''
+        }));
         let currentIndex = allImages.findIndex(img => img.src === src);
         const $viewer = $(`
             <div id="DA-image-viewer-panel" class="DA-sub-panel">
                 <div class="DA-sub-header">
                     <div class="DA-sub-title"><i class="fa-solid fa-image"></i> Просмотр</div>
                     <div class="DA-header-actions" style="margin-left: auto; margin-right: 8px;">
+                        <button class="DA-icon-btn-sm DA-viewer-zoom-level" id="DA-viewer-zoom-reset" title="Сбросить масштаб" hidden></button>
                         <button class="DA-icon-btn-sm" id="DA-viewer-fullscreen" title="Во весь экран"><i class="fa-solid fa-expand"></i></button>
                         <button class="DA-icon-btn-sm" id="DA-viewer-close"><i class="fa-solid fa-xmark"></i></button>
                     </div>
@@ -264,7 +378,7 @@ export const AlbumUI = {
                 <div class="DA-viewer-main">
                     <div class="DA-viewer-img-container">
                         <div class="DA-viewer-nav DA-viewer-nav-prev" id="DA-viewer-prev"><i class="fa-solid fa-chevron-left"></i></div>
-                        <img class="DA-viewer-img" src="" alt="Image" style="cursor: pointer;" />
+                        <img class="DA-viewer-img DA-zoomable" alt="Image" draggable="false" />
                         <div class="DA-viewer-nav DA-viewer-nav-next" id="DA-viewer-next"><i class="fa-solid fa-chevron-right"></i></div>
                     </div>
                 </div>
@@ -283,24 +397,52 @@ export const AlbumUI = {
         `);
         $panel.append($viewer);
         this._showSubPanel($viewer);
+
+        const img = $viewer.find('.DA-viewer-img')[0];
+        const $container = $viewer.find('.DA-viewer-img-container');
+        const $zoomBadge = $viewer.find('#DA-viewer-zoom-reset');
+
+        const step = (direction) => {
+            currentIndex = (currentIndex + direction + allImages.length) % allImages.length;
+            updateViewer(currentIndex);
+        };
+
+        const zoom = createZoomController({
+            img,
+            clip: $container[0],
+            onSwipe: allImages.length > 1 ? step : null,
+            // A tap opens the fullscreen viewer; it waits out a possible double tap,
+            // which zooms in place instead.
+            onTap: () => this.openFullScreenViewer(allImages.map(i => i.src), currentIndex),
+            onChange: (scale) => {
+                const zoomed = scale > 1;
+                // The prev/next zones cover the image edges; while zoomed they would
+                // swallow pans and pinches that start there.
+                $container.toggleClass('DA-zoom-active', zoomed);
+                $zoomBadge.prop('hidden', !zoomed).text(zoomed ? `${Math.round(scale * 100)}%` : '');
+            }
+        });
+        this._viewerZoom = zoom;
+
+        const closeViewer = () => {
+            zoom.destroy();
+            if (this._viewerZoom === zoom) this._viewerZoom = null;
+            this._closeSubPanel($viewer);
+        };
+
         const updateViewer = (index) => {
             const imgData = allImages[index];
-            const $img = $viewer.find('.DA-viewer-img');
-            
-            // Instant image update, no opacity/transition
-            $img.attr('src', imgData.src);
-            
-            $viewer.find('#DA-viewer-fullscreen').off('click').on('click', () => this.openFullScreenViewer(allImages.map(i => i.src), index));
-            $viewer.find('.DA-viewer-img').off('click').on('click', () => this.openFullScreenViewer(allImages.map(i => i.src), index));
-            
+            // Set as a property: the source is user data and must not be parsed as markup.
+            img.src = imgData.src;
+
             $viewer.find('#DA-viewer-hide').off('click').on('click', () => {
                 this._hideItem(imgData.hideKey);
-                this._closeSubPanel($viewer);
+                closeViewer();
                 this.scanAndRender();
             });
             $viewer.find('#DA-viewer-prompt').off('click').on('click', () => this._openPromptViewer(imgData.prompt));
             $viewer.find('#DA-viewer-scroll').off('click').on('click', () => {
-                this._closeSubPanel($viewer);
+                closeViewer();
                 this.close();
                 const $mes = $(`#chat .mes[mesid="${imgData.mesId}"]`);
                 if ($mes.length) {
@@ -310,89 +452,71 @@ export const AlbumUI = {
                 }
             });
         };
-        $viewer.find('#DA-viewer-close').on('click', () => this._closeSubPanel($viewer));
-        $viewer.find('#DA-viewer-prev').on('click', () => {
-            currentIndex = (currentIndex - 1 + allImages.length) % allImages.length;
-            updateViewer(currentIndex);
-        });
-        $viewer.find('#DA-viewer-next').on('click', () => {
-            currentIndex = (currentIndex + 1) % allImages.length;
-            updateViewer(currentIndex);
-        });
-        let touchStartX = 0;
-        $viewer.find('.DA-viewer-img-container').on('touchstart', (e) => {
-            touchStartX = e.originalEvent.touches[0].clientX;
-        });
-        $viewer.find('.DA-viewer-img-container').on('touchend', (e) => {
-            const touchEndX = e.originalEvent.changedTouches[0].clientX;
-            const diff = touchStartX - touchEndX;
-            if (Math.abs(diff) > 50) {
-                if (diff > 0) {
-                    currentIndex = (currentIndex + 1) % allImages.length;
-                } else {
-                    currentIndex = (currentIndex - 1 + allImages.length) % allImages.length;
-                }
-                updateViewer(currentIndex);
-            }
-        });
+
+        $viewer.find('#DA-viewer-fullscreen').on('click', () => this.openFullScreenViewer(allImages.map(i => i.src), currentIndex));
+        $zoomBadge.on('click', () => zoom.reset());
+        $viewer.find('#DA-viewer-close').on('click', closeViewer);
+        $viewer.find('#DA-viewer-prev').on('click', () => step(-1));
+        $viewer.find('#DA-viewer-next').on('click', () => step(1));
         updateViewer(currentIndex);
     },
-    
+
     openFullScreenViewer(imageList, currentIndex) {
-        console.log('[DreamAlbum] Opening FS Viewer, hiding button');
         FloatingUI.hide();
         $('#DA-fullscreen-viewer').remove();
         let index = currentIndex;
         const $fs = $(`
             <div id="DA-fullscreen-viewer" style="z-index: 2000000 !important;">
                 <div class="DA-fullscreen-header">
+                    <span class="DA-fs-zoom-level"></span>
+                    <button class="DA-fs-btn" id="DA-fs-zoom-out" title="Уменьшить"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+                    <button class="DA-fs-btn" id="DA-fs-zoom-in" title="Увеличить (колесо мыши)"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+                    <button class="DA-fs-btn" id="DA-fs-zoom-reset" title="Сбросить масштаб (двойной клик)"><i class="fa-solid fa-arrows-to-dot"></i></button>
                     <button class="DA-fs-btn" id="DA-fs-rotate-left" title="Повернуть влево"><i class="fa-solid fa-rotate-left"></i></button>
                     <button class="DA-fs-btn" id="DA-fs-rotate-right" title="Повернуть вправо"><i class="fa-solid fa-rotate-right"></i></button>
                     <button class="DA-fs-btn" id="DA-fs-close" title="Закрыть"><i class="fa-solid fa-xmark"></i></button>
                 </div>
                 <div class="DA-fullscreen-body">
-                    <img class="DA-fullscreen-img" src="${imageList[index]}" alt="Fullscreen Image" />
+                    <img class="DA-fullscreen-img DA-zoomable" alt="Fullscreen Image" draggable="false" />
                 </div>
             </div>
         `);
+        const img = $fs.find('.DA-fullscreen-img')[0];
+        // Set as a property: the source is user data and must not be parsed as markup.
+        img.src = imageList[index];
         $('body').append($fs);
         $fs[0].offsetHeight;
         $fs.addClass('DA-visible');
         $('body').addClass('DA-no-scroll');
-        let rotation = 0;
-        const $img = $fs.find('.DA-fullscreen-img');
-        const updateFsTransform = () => {
-            const isRotated = (rotation / 90) % 2 !== 0;
-            if (isRotated) {
-                $img.css({ 'max-width': '100vh', 'max-height': '100vw' });
-            } else {
-                $img.css({ 'max-width': '100%', 'max-height': '100%' });
-            }
-            $img.css('transform', `rotate(${rotation}deg) translateZ(0)`);
+
+        const BUTTON_STEP = 1.4;
+        const $zoomLevel = $fs.find('.DA-fs-zoom-level');
+
+        const showImageAt = (nextIndex) => {
+            index = (nextIndex + imageList.length) % imageList.length;
+            // Zoom is deliberately kept across images — only the header button, Esc
+            // or 0 clears it. Rotation is per-image and still resets.
+            zoom.resetRotation();
+            img.src = imageList[index];
         };
-        const updateImage = () => {
-            $img.css('transition', 'none');
-            rotation = 0;
-            updateFsTransform();
-            
-            // Force reflow
-            $img[0].offsetHeight;
-            $img.css('transition', '');
-            
-            $img.attr('src', imageList[index]);
-        };
-        $fs.find('#DA-fs-rotate-left').on('click', (e) => {
-            e.stopPropagation();
-            rotation -= 90;
-            updateFsTransform();
+
+        const zoom = createZoomController({
+            img,
+            clip: $fs.find('.DA-fullscreen-body')[0],
+            surface: $fs[0],
+            onSwipe: imageList.length > 1 ? (direction) => showImageAt(index + direction) : null,
+            onChange: (scale) => $zoomLevel.text(scale > 1 ? `${Math.round(scale * 100)}%` : '')
         });
-        $fs.find('#DA-fs-rotate-right').on('click', (e) => {
-            e.stopPropagation();
-            rotation += 90;
-            updateFsTransform();
-        });
+
+        $fs.find('#DA-fs-zoom-in').on('click', (e) => { e.stopPropagation(); zoom.zoomBy(BUTTON_STEP); });
+        $fs.find('#DA-fs-zoom-out').on('click', (e) => { e.stopPropagation(); zoom.zoomBy(1 / BUTTON_STEP); });
+        $fs.find('#DA-fs-zoom-reset').on('click', (e) => { e.stopPropagation(); zoom.reset(); });
+        $fs.find('#DA-fs-rotate-left').on('click', (e) => { e.stopPropagation(); zoom.rotate(-90); });
+        $fs.find('#DA-fs-rotate-right').on('click', (e) => { e.stopPropagation(); zoom.rotate(90); });
+
         const closeFs = () => {
-            console.log('[DreamAlbum] Closing FS Viewer, showing button');
+            zoom.destroy();
+            $(document).off('keydown', keyHandler);
             $fs.removeClass('DA-visible');
             setTimeout(() => {
                 $fs.remove();
@@ -404,37 +528,41 @@ export const AlbumUI = {
         };
         $fs.find('#DA-fs-close').on('click', closeFs);
         $fs.on('click', (e) => {
+            // A pan that ends over the backdrop must not be read as a dismiss.
+            if (zoom.recentlyGestured()) return;
             if (e.target.id === 'DA-fullscreen-viewer' || $(e.target).hasClass('DA-fullscreen-body')) {
                 closeFs();
             }
         });
-        
-        let touchStartX = 0;
-        $fs.on('touchstart', (e) => {
-            touchStartX = e.originalEvent.touches[0].clientX;
-        });
-        $fs.on('touchend', (e) => {
-            const touchEndX = e.originalEvent.changedTouches[0].clientX;
-            const diff = touchStartX - touchEndX;
-            if (Math.abs(diff) > 50) {
-                if (diff > 0) {
-                    index = (index + 1) % imageList.length;
-                } else {
-                    index = (index - 1 + imageList.length) % imageList.length;
-                }
-                updateImage();
-            }
-        });
-        // ESC to close
-        const escHandler = (e) => {
-            if (e.key === 'Escape') {
-                closeFs();
-                $(document).off('keydown', escHandler);
+
+        const keyHandler = (e) => {
+            switch (e.key) {
+                case 'Escape':
+                    if (zoom.isZoomed()) zoom.reset();
+                    else closeFs();
+                    break;
+                case '+':
+                case '=':
+                    zoom.zoomBy(BUTTON_STEP);
+                    break;
+                case '-':
+                case '_':
+                    zoom.zoomBy(1 / BUTTON_STEP);
+                    break;
+                case '0':
+                    zoom.reset();
+                    break;
+                case 'ArrowLeft':
+                    if (!zoom.isZoomed() && imageList.length > 1) showImageAt(index - 1);
+                    break;
+                case 'ArrowRight':
+                    if (!zoom.isZoomed() && imageList.length > 1) showImageAt(index + 1);
+                    break;
             }
         };
-        $(document).on('keydown', escHandler);
+        $(document).on('keydown', keyHandler);
     },
-    
+
     _openPromptViewer(prompt) {
         if (!prompt) {
             toastr.info('Промпт пуст или отсутствует.');
@@ -482,7 +610,8 @@ export const AlbumUI = {
         const chat = SillyTavern.getContext().chat || [];
 
         chat.forEach((message, mesId) => {
-            const contentToScan = (message.mes || '') + '\n' + (message.extra?.extblocks || '');
+            const contentToScan = (message.mes || '') + '\n' + readStore(message.extra);
+            if (contentToScan.indexOf('data-iig-instruction') === -1) return;
             const imgRegex = /<img[^>]+data-iig-instruction=(['"])(.*?)\1[^>]*>/gi;
 
             let match;
@@ -562,7 +691,7 @@ export const AlbumUI = {
         const message = chat[mesId];
         
         if (message) {
-            const contentToScan = (message.mes || '') + '\n' + (message.extra?.extblocks || '');
+            const contentToScan = (message.mes || '') + '\n' + readStore(message.extra);
             const imgRegex = /<img[^>]+data-iig-instruction=(['"])(.*?)\1[^>]*>/gi;
             
             let match;
@@ -749,6 +878,7 @@ export const AlbumUI = {
         const sets = extensionSettings.DreamAlbum.sets || [];
         const floatingStyles = extensionSettings.DreamAlbum.floating_buttons_styles || [];
         $sub.find('#DA-moodtube-link').prop('checked', extensionSettings.DreamAlbum.moodtube_link ?? false);
+        $sub.find('#DA-extblocks-installed').prop('checked', extensionSettings.DreamAlbum.extblocks_installed ?? false);
         $sub.find('#DA-button-position').val(extensionSettings.DreamAlbum.button_position || 'top-left');
 
         const btns = extensionSettings.DreamAlbum.action_buttons || { fullscreen: true, copy: true, edit: true, delete: true };
@@ -757,22 +887,39 @@ export const AlbumUI = {
         $sub.find('#DA-btn-show-edit').prop('checked', btns.edit ?? true);
         $sub.find('#DA-btn-show-delete').prop('checked', btns.delete ?? true);
 
-        for (let i = 1; i <= 3; i++) {
-            const $select = $sub.find(`#DA-floating-style-${i}`);
+        const fillStyleSelect = ($select, value) => {
             $select.empty().append('<option value="">-- Нет --</option>');
             sets.forEach(set => {
                 $select.append($('<option>', { value: set.name, text: set.name }));
             });
-            $select.val(floatingStyles[i - 1] || '');
+            $select.val(value || '');
+        };
+
+        for (let i = 1; i <= 3; i++) {
+            fillStyleSelect($sub.find(`#DA-floating-style-${i}`), floatingStyles[i - 1]);
+        }
+
+        const groupStyles = extensionSettings.DreamAlbum.floating_group_styles || [];
+        for (let i = 1; i <= FLOATING_GROUP_MAX; i++) {
+            fillStyleSelect($sub.find(`#DA-floating-group-${i}`), groupStyles[i - 1]);
         }
         $sub.find('#DA-api-settings-close').on('click', () => this._closeSubPanel($sub));
         $sub.find('#DA-test-connection').on('click', async () => {
-            toastr.info('Проверка...');
+            const $btn = $sub.find('#DA-test-connection');
+            if ($btn.prop('disabled')) return;
+            const originalHtml = $btn.html();
+            $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Проверка...');
             try {
-                const ok = await ApiService.testConnection?.();
-                if (ok !== false) toastr.success('Успех!');
-                else toastr.error('Ошибка.');
-            } catch (e) { toastr.error(e.message); }
+                // Tests what the panel shows: the active preset and its profile.
+                const result = await ApiService.testConnection(extStates.DreamAlbum_settings.active_api_preset);
+                if (result.ok) {
+                    const reply = result.reply ? ` Ответ: «${result.reply.slice(0, 40)}»` : '';
+                    toastr.success(`Профиль «${result.profile}» (${result.model || 'модель по умолчанию'}) отвечает.${reply}`, 'Подключение работает');
+                }
+                // Failures were already reported by generateBlocks with the HTTP status.
+            } finally {
+                $btn.prop('disabled', false).html(originalHtml);
+            }
         });
         $sub.find('#DA-api-settings-save').on('click', async () => {
             const targetPreset = extStates.api_preset;
@@ -793,7 +940,16 @@ export const AlbumUI = {
                 if (val) newFloatingStyles.push(val);
             }
             extensionSettings.DreamAlbum.floating_buttons_styles = newFloatingStyles;
+
+            const newGroupStyles = [];
+            for (let i = 1; i <= FLOATING_GROUP_MAX; i++) {
+                const val = $sub.find(`#DA-floating-group-${i}`).val();
+                // Duplicates would render two identical buttons in the tray.
+                if (val && !newGroupStyles.includes(val)) newGroupStyles.push(val);
+            }
+            extensionSettings.DreamAlbum.floating_group_styles = newGroupStyles;
             extensionSettings.DreamAlbum.moodtube_link = $sub.find('#DA-moodtube-link').prop('checked');
+            extensionSettings.DreamAlbum.extblocks_installed = $sub.find('#DA-extblocks-installed').prop('checked');
             extensionSettings.DreamAlbum.button_position = $sub.find('#DA-button-position').val() || 'top-left';
             extensionSettings.DreamAlbum.action_buttons = {
                 fullscreen: $sub.find('#DA-btn-show-fullscreen').prop('checked'),
@@ -884,23 +1040,83 @@ export const AlbumUI = {
     
     async openStyleEditor(idx, refreshCallback) {
         const isNew = idx === null || idx === undefined;
-        let styleObj = isNew ? SettingsService.getDefaultSet() : extensionSettings.DreamAlbum.sets[idx];
+        const sets = extensionSettings.DreamAlbum.sets;
+        const styleObj = isNew ? SettingsService.getDefaultSet() : sets[idx];
+        const originalName = isNew ? '' : styleObj.name;
         const $panel = $('#DreamAlbum-panel');
-        
+
         $panel.find('#DA-style-editor-panel').remove();
         const editorHtml = $(await renderExtensionTemplateAsync(templates_path, ElementTemplate.NEW_SET_POPUP));
         $panel.append(editorHtml);
-        
+
         const $sub = $panel.find('#DA-style-editor-panel');
         this._showSubPanel($sub);
-        
-        if (styleObj.name !== 'Default') $sub.find('#DA-style-editor-name').val(styleObj.name);
-        if (styleObj.prompt) $sub.find('#DA-style-editor-prompt').val(styleObj.prompt);
+
+        const $name = $sub.find('#DA-style-editor-name');
+        const $nameError = $sub.find('#DA-style-editor-name-error');
+        const $prompt = $sub.find('#DA-style-editor-prompt');
+        const promptEl = $prompt[0];
+        const $dirty = $sub.find('#DA-style-editor-dirty');
+        const $stats = $sub.find('#DA-style-editor-stats');
+        const $warn = $sub.find('#DA-style-editor-warn');
         const $imgPreview = $sub.find('#DA-style-editor-img-preview');
         const $imgUpload = $sub.find('#DA-style-editor-img-upload');
-        const $imgBtn = $sub.find('#DA-style-editor-img-btn');
-        let currentImageBase64 = styleObj.image || '';
-        
+
+        // The default template carries the placeholder name "Default"; show an empty field instead.
+        const initial = {
+            name: styleObj.name === 'Default' ? '' : styleObj.name,
+            prompt: styleObj.prompt || '',
+            image: styleObj.image || ''
+        };
+        $name.val(initial.name);
+        $prompt.val(initial.prompt);
+        let currentImageBase64 = initial.image;
+
+        // --- Dirty tracking -----------------------------------------------------
+        const isDirty = () => $name.val() !== initial.name
+            || $prompt.val() !== initial.prompt
+            || currentImageBase64 !== initial.image;
+        const refreshDirty = () => $dirty.prop('hidden', !isDirty());
+
+        // --- Prompt statistics --------------------------------------------------
+        const fmt = (n) => n.toLocaleString('ru-RU');
+        let statsSeq = 0;
+        let tokenTimer = null;
+
+        const updateStats = () => {
+            const text = promptEl.value;
+            const chars = text.length;
+            const lines = chars ? text.split('\n').length : 0;
+            const macros = (text.match(/\{\{[^{}]*\}\}/g) || []).length;
+            const opens = (text.match(/\{\{/g) || []).length;
+            const closes = (text.match(/\}\}/g) || []).length;
+
+            const describe = (tokens, exact) => `${fmt(chars)} симв. · ${exact ? '' : '≈'}${fmt(tokens)} ток. · ${fmt(lines)} стр. · макросов: ${macros}`;
+            // Instant estimate; the tokenizer's exact count replaces it once typing pauses.
+            $stats.text(describe(Math.ceil(chars / 4), false));
+
+            if (opens !== closes) {
+                $warn.text('Непарные {{ }} — макрос не подставится').prop('hidden', false);
+            } else {
+                $warn.prop('hidden', true).text('');
+            }
+
+            const countTokens = SillyTavern.getContext().getTokenCountAsync;
+            if (typeof countTokens !== 'function' || !chars) return;
+            clearTimeout(tokenTimer);
+            const seq = ++statsSeq;
+            tokenTimer = setTimeout(async () => {
+                try {
+                    const tokens = await countTokens(text);
+                    // Drop the result if the text changed while the tokenizer was busy.
+                    if (seq === statsSeq) $stats.text(describe(tokens, true));
+                } catch (err) {
+                    console.debug('[DreamAlbum] Token count unavailable:', err);
+                }
+            }, 350);
+        };
+
+        // --- Cover --------------------------------------------------------------
         const updatePreview = () => {
             if (currentImageBase64) {
                 const safeBase64 = currentImageBase64.replace(/'/g, "\\'");
@@ -912,39 +1128,126 @@ export const AlbumUI = {
             }
         };
         updatePreview();
-        const triggerUpload = () => $imgUpload.trigger('click');
-        $imgPreview.on('click', triggerUpload);
-        $imgBtn.on('click', triggerUpload);
-        $imgUpload.on('change', function() {
+        $imgPreview.on('click', () => $imgUpload.trigger('click'));
+        $imgUpload.on('change', async function() {
             const file = this.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                currentImageBase64 = e.target.result;
+            // Downscale before storing: covers live inline in settings.json, which is
+            // rewritten and backed up on every save.
+            try {
+                currentImageBase64 = await fileToThumbnail(file);
                 updatePreview();
-            };
-            reader.readAsDataURL(file);
+                refreshDirty();
+            } catch (err) {
+                console.error('[DreamAlbum] Cover upload failed:', err);
+                toastr.error(err.message || 'Не удалось загрузить изображение.');
+            }
         });
-        $sub.find('#DA-style-editor-close').on('click', () => {
+
+        // --- Name validation ----------------------------------------------------
+        // Style names double as identifiers (active style, floating buttons), and the
+        // old save path silently overwrote any style that happened to share a name.
+        const findNameClash = (name) => sets.findIndex((s, i) => s.name === name && (isNew || i !== idx));
+        const validateName = () => {
+            const name = $name.val().trim();
+            const clash = !!name && findNameClash(name) !== -1;
+            $nameError.text(clash ? 'Стиль с таким названием уже есть' : '').prop('hidden', !clash);
+            $name.toggleClass('DA-input-invalid', clash);
+            return !clash;
+        };
+
+        $name.on('input', () => {
+            validateName();
+            refreshDirty();
+        });
+        $prompt.on('input', () => {
+            updateStats();
+            refreshDirty();
+        });
+        updateStats();
+
+        // --- Macro chips --------------------------------------------------------
+        // Built here rather than in the template: templates are rendered through
+        // Handlebars, which would substitute the {{...}} text before it ever shows.
+        const MACROS = [
+            ['{{char}}', 'Имя персонажа'],
+            ['{{user}}', 'Имя пользователя'],
+            ['{{persona}}', 'Описание персоны'],
+            ['{{description}}', 'Описание персонажа'],
+            ['{{scenario}}', 'Сценарий'],
+        ];
+        const $macros = $sub.find('.DA-editor-macros');
+        for (const [macro, title] of MACROS) {
+            $('<button type="button" class="DA-macro-chip"></button>')
+                .attr({ 'data-macro': macro, title })
+                .text(macro)
+                .appendTo($macros);
+        }
+        $prompt.attr('placeholder', 'Инструкция для ИИ. Для картинки — полный промпт с требованием тега <img> и нужными параметрами, без CSS/HTML вокруг. Макросы SillyTavern ({{char}}, {{user}}…) подставятся при генерации.');
+
+        // mousedown would move focus off the textarea and collapse the caret.
+        $sub.on('mousedown', '.DA-macro-chip', (e) => e.preventDefault());
+        $sub.on('click', '.DA-macro-chip', (e) => {
+            const macro = e.currentTarget.dataset.macro;
+            promptEl.focus();
+            promptEl.setRangeText(macro, promptEl.selectionStart, promptEl.selectionEnd, 'end');
+            promptEl.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        // --- Close / save -------------------------------------------------------
+        const close = async () => {
+            if (isDirty()) {
+                const discard = await this._showConfirm('Закрыть без сохранения? Изменения будут потеряны.', 'Закрыть');
+                if (!discard) return;
+            }
+            clearTimeout(tokenTimer);
             this._closeSubPanel($sub);
-        });
-        
-        $sub.find('#DA-style-editor-save').on('click', async () => {
-            const newName = $sub.find('#DA-style-editor-name').val()?.trim() || 'Новый стиль';
-            const newPrompt = $sub.find('#DA-style-editor-prompt').val() || '';
+        };
+        $sub.find('#DA-style-editor-close').on('click', close);
+
+        const save = async () => {
+            const newName = $name.val().trim() || 'Новый стиль';
+            if (findNameClash(newName) !== -1) {
+                $name.val(newName);
+                validateName();
+                $name.trigger('focus');
+                return;
+            }
+
             styleObj.name = newName;
-            styleObj.prompt = newPrompt;
+            styleObj.prompt = promptEl.value;
             styleObj.image = currentImageBase64;
+
+            if (!isNew && originalName !== newName) {
+                // Other settings point at a style by name; follow the rename.
+                SettingsService.renameStyleReferences(originalName, newName);
+            }
+
             if (isNew) {
-                const setIdx = updateOrInsert(extensionSettings.DreamAlbum.sets, styleObj);
-                await SettingsService.changeSet(setIdx);
+                sets.push(styleObj);
+                await SettingsService.changeSet(sets.length - 1);
             } else {
                 saveSettingsDebounced();
             }
-            
+
+            // Floating buttons are built from style names and covers.
+            FloatingUI.render();
+
+            clearTimeout(tokenTimer);
             this._closeSubPanel($sub);
             toastr.success(`Стиль «${styleObj.name}» сохранен.`);
             if (refreshCallback) refreshCallback();
+        };
+        $sub.find('#DA-style-editor-save').on('click', save);
+        $sub.on('keydown', (e) => {
+            // Ctrl/Alt+Enter are SillyTavern's regenerate/continue hotkeys; typing in
+            // the editor must not fire them.
+            if (e.key === 'Enter' && (e.ctrlKey || e.altKey || e.metaKey)) {
+                e.stopPropagation();
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                save();
+            }
         });
     },
     /**
@@ -988,6 +1291,8 @@ export const AlbumUI = {
                 $themeDropdown.hide();
             }
         });
+
+        this._bindGridInteractions($('#DA-grid'));
 
         // Power button
         const $powerBtn = $('#DA-power-btn');
@@ -1035,6 +1340,26 @@ export const AlbumUI = {
             saveSettingsDebounced();
             toastr.success(`Плавающие кнопки ${enabled ? 'включены' : 'выключены'}.`);
         });
+        // Context whitespace compression toggle
+        const $compactBtn = $('#DA-compact-toggle-btn');
+        const updateCompactState = () => {
+            const enabled = !!extensionSettings.DreamAlbum?.compress_context_whitespace;
+            $compactBtn.toggleClass('DA-power-on', enabled);
+            $compactBtn.attr('title', enabled
+                ? 'Сжатие пробелов в контексте: ВКЛ. Карты, персона, лорбук и история уходят в запрос с одним пробелом вместо переносов, табов и повторов.'
+                : 'Сжатие пробелов в контексте: выкл. Нажмите, чтобы отправлять карты, персону, лорбук и историю без лишних пробелов и переносов.');
+        };
+        updateCompactState();
+        $compactBtn.on('click', () => {
+            const enabled = !extensionSettings.DreamAlbum?.compress_context_whitespace;
+            extensionSettings.DreamAlbum.compress_context_whitespace = enabled;
+            updateCompactState();
+            saveSettingsDebounced();
+            toastr.success(enabled
+                ? 'Пробелы в контексте сжимаются: переносы, табы и повторы → один пробел. Промпт стиля не трогается.'
+                : 'Сжатие пробелов в контексте выключено.');
+        });
+
         $('#DA-close-btn').on('click', () => this.close());
         $('#DreamAlbum-backdrop').on('click', (e) => {
             if (e.target.id === 'DreamAlbum-backdrop') {
@@ -1043,32 +1368,114 @@ export const AlbumUI = {
         });
         $('#DA-settings-btn').on('click', () => this.openApiSettings());
         $panel.find('#DA-style-btn').on('click', () => this.openStylePicker());
-        $panel.find('#DA-create-btn').on('click', () => this._triggerImageGeneration());
+        this._bindCreateButton($panel.find('#DA-create-btn'));
         $panel.find('#DA-hidden-btn').on('click', () => this._openHiddenPanel());
     },
     /**
      * Запускает генерацию изображения на основе текущего стиля и контекста чата.
      */
-    async _triggerImageGeneration() {
+    /**
+     * Tap generates straight away; holding the button asks for a one-off OOC
+     * instruction first. The fill animation (DA-holding) shows how long to hold.
+     * @param {jQuery} $btn
+     */
+    _bindCreateButton($btn) {
+        const HOLD_MS = 500;
+        const MOVE_TOLERANCE = 10;
+        let timer = null;
+        let held = false;
+        let startX = 0;
+        let startY = 0;
+
+        const stop = () => {
+            clearTimeout(timer);
+            timer = null;
+            $btn.removeClass('DA-holding');
+        };
+        const pointOf = (e) => (e.originalEvent?.touches?.[0] ?? e.originalEvent ?? e);
+
+        $btn.on('mousedown touchstart', (e) => {
+            if (e.type === 'mousedown' && e.button !== 0) return;
+            if ($btn.prop('disabled')) return;
+            const point = pointOf(e);
+            startX = point.clientX;
+            startY = point.clientY;
+            held = false;
+            stop();
+            $btn.addClass('DA-holding');
+            timer = setTimeout(() => {
+                timer = null;
+                held = true;
+                $btn.removeClass('DA-holding');
+                if (navigator.vibrate) navigator.vibrate(40);
+                this._generateWithOoc();
+            }, HOLD_MS);
+        });
+
+        $btn.on('touchmove mousemove', (e) => {
+            if (!timer) return;
+            const point = pointOf(e);
+            if (Math.abs(point.clientX - startX) > MOVE_TOLERANCE || Math.abs(point.clientY - startY) > MOVE_TOLERANCE) {
+                stop();
+            }
+        });
+        $btn.on('mouseup mouseleave touchend touchcancel', stop);
+        // A long press on touch screens otherwise opens the browser's context menu.
+        $btn.on('contextmenu', (e) => e.preventDefault());
+
+        $btn.on('click', () => {
+            if (held) {
+                held = false;
+                return;
+            }
+            this._triggerImageGeneration();
+        });
+    },
+
+    /**
+     * Returns the style generation should use, or null after telling the user why
+     * there is none. Checked before the OOC dialog so nobody types into it only to be
+     * told the chat or style was missing.
+     * @returns {Object|null}
+     */
+    _getGenerationStyle() {
         const ctx = SillyTavern.getContext();
         if (ctx.characterId === undefined && ctx.groupId === undefined) {
             toastr.warning('Сначала откройте чат (персонаж или группа).');
-            return;
+            return null;
         }
         const activeSetName = extensionSettings.DreamAlbum?.active_set;
         const activeSet = extensionSettings.DreamAlbum?.sets?.find(s => s.name === activeSetName);
         if (!activeSet || !activeSet.prompt) {
             toastr.warning('Пожалуйста, выберите стиль и убедитесь, что в нем настроен промпт.');
             this.openStylePicker();
-            return;
+            return null;
         }
+        return activeSet;
+    },
+
+    async _generateWithOoc() {
+        const activeSet = this._getGenerationStyle();
+        if (!activeSet) return;
+        const instruction = await askOocInstruction({
+            styleName: activeSet.name,
+            initial: this._lastOoc || ''
+        });
+        if (instruction === null) return;
+        this._lastOoc = instruction;
+        await this._triggerImageGeneration(instruction);
+    },
+
+    async _triggerImageGeneration(instruction = null) {
+        const activeSet = this._getGenerationStyle();
+        if (!activeSet) return;
         const $btn = $('#DA-create-btn');
         const originalContent = $btn.html();
         
         try {
             $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> <span>Генерация...</span>');
             
-            await GenerationService.triggerStyleGeneration(activeSet);
+            await GenerationService.triggerStyleGeneration(activeSet, instruction);
             // toastr.success('Запрос на генерацию отправлен! Подождите, пока SillyImages создаст изображение.');
             
             setTimeout(() => this.scanAndRender(), 3000);
@@ -1085,21 +1492,24 @@ export const AlbumUI = {
      * @param {string} text Текст вопроса.
      * @returns {Promise<boolean>}
      */
-    async _showConfirm(text) {
+    async _showConfirm(text, yesLabel = 'Удалить') {
         const $panel = $('#DreamAlbum-panel');
         $panel.find('#DA-confirm-panel').remove();
         return new Promise((resolve) => {
             const $confirm = $(`
                 <div id="DA-confirm-panel" class="DA-sub-panel DA-confirm-wrapper">
                     <div class="DA-confirm-box">
-                        <div class="DA-confirm-text">${text}</div>
+                        <div class="DA-confirm-text"></div>
                         <div class="DA-confirm-actions">
-                            <button id="DA-confirm-yes" class="DA-btn-confirm DA-btn-primary">Удалить</button>
+                            <button id="DA-confirm-yes" class="DA-btn-confirm DA-btn-primary"></button>
                             <button id="DA-confirm-no" class="DA-btn-confirm DA-btn-secondary">Отмена</button>
                         </div>
                     </div>
                 </div>
             `);
+            // Style names reach this text; never interpret them as markup.
+            $confirm.find('.DA-confirm-text').text(text);
+            $confirm.find('#DA-confirm-yes').text(yesLabel);
             $panel.append($confirm);
             this._showSubPanel($confirm);
             $confirm.find('#DA-confirm-yes').on('click', () => {

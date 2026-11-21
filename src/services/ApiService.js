@@ -3,7 +3,7 @@ import { getEventSourceStream } from '../../../../../sse-stream.js';
 import { extStates } from '../core/state.js';
 import { MessageRole, defaultExtPrefix } from '../core/constants.js';
 import { SettingsService } from './SettingsService.js';
-const { getRequestHeaders, extensionSettings, chatCompletionSettings } = SillyTavern.getContext();
+const { getRequestHeaders, extensionSettings, chatCompletionSettings, CONNECT_API_MAP } = SillyTavern.getContext();
 export const ApiService = {
     /**
      * Normalizes a profile API URL before sending it to the backend.
@@ -47,6 +47,12 @@ export const ApiService = {
             }
         } else if (cc_source === chat_completion_sources.ZAI && profileApiValue) {
             generate_data['zai_endpoint'] = profileApiValue;
+        } else if (profileApiValue) {
+            // The same profile field doubles as the endpoint for these sources, exactly
+            // as in SillyTavern's own ConnectionManagerRequestService.
+            generate_data['siliconflow_endpoint'] = profileApiValue;
+            generate_data['minimax_endpoint'] = profileApiValue;
+            generate_data['pollinations_endpoint'] = profileApiValue;
         }
     },
     /**
@@ -129,9 +135,12 @@ export const ApiService = {
      */
     getChatCompletionSource(apiName) {
         if (!apiName) return 'openai';
-        if (apiName === 'google') return chat_completion_sources.MAKERSUITE;
         // Mapping Antigravity profiles to OpenAI source for proper key handling
         if (apiName.toLowerCase().includes('antigravity')) return chat_completion_sources.OPENAI;
+        // SillyTavern's own profile -> source table, the one the Connection Manager uses.
+        const mapped = CONNECT_API_MAP?.[apiName]?.source;
+        if (mapped) return mapped;
+        if (apiName === 'google') return chat_completion_sources.MAKERSUITE;
         return apiName;
     },
     /**
@@ -148,8 +157,12 @@ export const ApiService = {
     },
     /**
      * Generates blocks using the specified messages and preset.
+     * @param {Object[]} messages
+     * @param {string} apiPresetName
+     * @param {Object} [overrides] Fields merged over the request payload, e.g. a small
+     *   max_tokens for a connection test.
      */
-    async generateBlocks(messages, apiPresetName) {
+    async generateBlocks(messages, apiPresetName, overrides = {}) {
         const preset = this.getApiPreset(apiPresetName);
         const connection_profile = this.getConnectionProfile(preset);
         const cc_source = this.getChatCompletionSource(connection_profile.api);
@@ -160,6 +173,10 @@ export const ApiService = {
             'temperature': preset.temperature,
             'stream': stream,
             'chat_completion_source': cc_source,
+            // Without it the backend uses whichever key of this source is active in the
+            // main API. With several keys for one source (e.g. two Custom providers),
+            // the profile's own provider then receives a foreign key: "Invalid token".
+            'secret_id': connection_profile['secret-id'],
             'max_tokens': preset.max_tokens,
             'reasoning_effort': preset.reasoning_effort ?? 'auto'
         };
@@ -181,6 +198,7 @@ export const ApiService = {
         if (cc_source === chat_completion_sources.MAKERSUITE || cc_source === chat_completion_sources.CLAUDE) {
             generate_data['use_sysprompt'] = true;
         }
+        Object.assign(generate_data, overrides);
         extStates.abortController = new AbortController();
         const generate_url = '/api/backends/chat-completions/generate';
         console.log('[DreamAlbum] Sending request to ST backend with profile:', connection_profile.name);
@@ -288,6 +306,36 @@ export const ApiService = {
         }
         return content;
     },
+    /**
+     * Sends a tiny request through the given preset's connection profile, with the
+     * same payload a real generation uses (profile, key, endpoint, proxy).
+     * Errors surface through generateBlocks' own toasts.
+     * @param {string} [apiPresetName] Defaults to the active preset.
+     * @returns {Promise<{ok: boolean, profile: string, model: string, reply?: string, error?: string}>}
+     */
+    async testConnection(apiPresetName) {
+        const preset = this.getApiPreset(apiPresetName);
+        const profile = this.getConnectionProfile(preset);
+        if (!profile) {
+            return { ok: false, profile: '', model: '', error: 'Нет ни одного профиля подключения.' };
+        }
+        try {
+            const data = await this.generateBlocks(
+                [{ role: MessageRole.USER, content: 'Reply with the single word: OK' }],
+                apiPresetName,
+                // Some reasoning models spend tokens before answering; leave room.
+                { max_tokens: 64, temperature: 0 }
+            );
+            const reply = this.getStreamingReply(data, this.getChatCompletionSource(profile.api))
+                || data?.content?.[0]?.text
+                || data?.choices?.[0]?.message?.content
+                || '';
+            return { ok: true, profile: profile.name, model: profile.model || '', reply: String(reply).trim() };
+        } catch (error) {
+            return { ok: false, profile: profile.name, model: profile.model || '', error: error.message };
+        }
+    },
+
     /**
      * Aborts the current generation.
      */

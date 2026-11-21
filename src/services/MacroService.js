@@ -217,9 +217,9 @@ export const MacroService = {
             const char = context.characters?.[context.characterId];
             if (char && char.data) {
                 extraContextText += `### Character Card Context: ${char.name}\n`;
-                if (char.data.description) extraContextText += `Description:\n${char.data.description}\n\n`;
-                if (char.data.personality) extraContextText += `Personality:\n${char.data.personality}\n\n`;
-                if (char.data.scenario) extraContextText += `Scenario:\n${char.data.scenario}\n\n`;
+                if (char.data.description) extraContextText += `Description:\n${ContextService.compactContext(char.data.description)}\n\n`;
+                if (char.data.personality) extraContextText += `Personality:\n${ContextService.compactContext(char.data.personality)}\n\n`;
+                if (char.data.scenario) extraContextText += `Scenario:\n${ContextService.compactContext(char.data.scenario)}\n\n`;
             }
         }
         if (preset.include_persona) {
@@ -229,7 +229,7 @@ export const MacroService = {
                 if (personaName || personaDesc) {
                     extraContextText += `### User Persona:\n`;
                     if (personaName) extraContextText += `Name: ${personaName}\n`;
-                    if (personaDesc) extraContextText += `Description:\n${personaDesc}\n\n`;
+                    if (personaDesc) extraContextText += `Description:\n${ContextService.compactContext(personaDesc)}\n\n`;
                 }
             } catch (err) {
                 console.error('[DreamAlbum] Failed to inject persona context:', err);
@@ -249,7 +249,7 @@ export const MacroService = {
                     worldInfoAll.push(activatedWorldInfo.WIDepthEntries.map(item => item.entries.join('\n')).join('\n\n'));
                 }
                 if (worldInfoAll.length > 0) {
-                    extraContextText += `### World Info (Lorebook) Context:\n${worldInfoAll.join('\n\n')}\n\n`;
+                    extraContextText += `### World Info (Lorebook) Context:\n${ContextService.compactContext(worldInfoAll.join('\n\n'))}\n\n`;
                 }
             } catch (err) {
                 console.error('[DreamAlbum] Failed to compile world info context:', err);

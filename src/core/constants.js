@@ -37,9 +37,14 @@ export const defaultSettings = {
     sets: [ defaultSet ],
     hidden_items: [],
     floating_buttons_enabled: false,
+    /** Collapse whitespace in request context (cards, persona, lorebook, history). */
+    compress_context_whitespace: false,
     floating_buttons_styles: [],
+    /** Styles shown inside the expanding group button, max FLOATING_GROUP_MAX. */
+    floating_group_styles: [],
     moodtube_link: false,
     album_theme: 'default',
+    extblocks_installed: false,
     button_position: 'top-left',
     action_buttons: {
         fullscreen: true,
@@ -48,6 +53,9 @@ export const defaultSettings = {
         delete: true
     },
 };
+
+/** How many styles the expanding floating group button can hold. */
+export const FLOATING_GROUP_MAX = 5;
 
 export const extName = 'DreamAlbum';
 export const defaultExtPrefix = '[DreamAlbum]';
@@ -140,6 +148,31 @@ export const ExtTopic = {
     FATPRESETS_DISABLE: '/fatpresets/disable/dreamalbum',
     PROMPT_TEMPLATE_ENGINE: '/prompttemplateengine/render'
 }
+
+/**
+ * Key under `message.extra` where DreamAlbum keeps its block storage.
+ * Deliberately NOT `extblocks`: the original Ext-blocks extension owns that key
+ * and clears it on swipes, which used to wipe DreamAlbum's images.
+ */
+export const MESSAGE_STORAGE_KEY = 'dreamalbum';
+
+/** Legacy key used before the split. Read-only: migrated on first access, never written. */
+export const LEGACY_STORAGE_KEY = 'extblocks';
+
+/**
+ * Maps a block's previous tag name to its current one. Old chat data still has the
+ * old tag text sitting in the legacy `extblocks` key; without this, renaming a block
+ * (e.g. to resolve a name collision with another extension) would silently orphan
+ * every image already stored under the old tag. Extend this whenever a shipped
+ * block's name changes.
+ */
+export const LEGACY_BLOCK_ALIASES = {
+    'ext-blocks': 'dreamalbum',
+};
+
+/** Markers delimiting DreamAlbum's own section inside the shared `extra.display_text`. */
+export const DISPLAY_SECTION_START = '<!--DA:BLOCKS-->';
+export const DISPLAY_SECTION_END = '<!--/DA:BLOCKS-->';
 
 export const editButton = `<div title="Edit dreamalbum" class="mes_button DreamAlbum-storage-edit fa-solid fa-pen-to-square interactable" tabindex="0"></div>`;
 export const selectionRewriteButton = `<div title="[DreamAlbum] Partial rewrite" class="menu_button DreamAlbum-selection-rewrite fa-solid fa-pen-to-square interactable" tabindex="0" role="button"></div>`;
