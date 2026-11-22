@@ -273,6 +273,15 @@ export const MainUI = {
                 return;
             }
             
+            // Sillyimages forks wrap the <img> in <span class="iig-img-host"> with their own
+            // corner buttons as a sibling. Move the whole host: pulling the bare <img> out
+            // orphans those buttons and makes the fork re-wrap it, so they show up twice.
+            const $iigHost = $el.parent('.iig-img-host');
+            if ($iigHost.length) {
+                wrapElement($iigHost, blockName);
+                return;
+            }
+
             // Check if we are inside another extension's wrapper (like notsosillynotsoimages)
             const $iigWrapper = $el.closest('.iig-image-wrapper');
             let $target = $el;

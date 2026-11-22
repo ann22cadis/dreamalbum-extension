@@ -307,11 +307,37 @@ export const EventController = {
         }
         // Click on image → toggle action buttons visibility
         let autoHideTimeout = null;
+        const showBlockActions = ($block) => {
+            if (autoHideTimeout) clearTimeout(autoHideTimeout);
+            $('.DA-interactive-block.DA-actions-visible').not($block).removeClass('DA-actions-visible');
+            $block.addClass('DA-actions-visible');
+            autoHideTimeout = setTimeout(() => {
+                $block.removeClass('DA-actions-visible');
+                autoHideTimeout = null;
+            }, 15000);
+        };
+        // Image Generation forks open their lightbox from a document capture listener and
+        // stop the click, so our delegated handler below never sees it. On touch screens
+        // (no hover) that leaves no way to reveal our buttons. Window capture runs first:
+        // the first tap reveals the buttons, the next one goes through to the lightbox.
+        const canHover = window.matchMedia?.('(hover: hover)');
+        window.addEventListener('click', (e) => {
+            if (canHover?.matches) return;
+            const img = e.target instanceof Element ? e.target.closest('img[data-iig-instruction]') : null;
+            // Error/stopped placeholders are tap-to-retry in the fork — leave those alone.
+            if (!img || img.classList.contains('iig-error-image')) return;
+            const block = img.closest('.DA-img-block');
+            if (!block || !img.closest('.DA-block-content')) return;
+            if (block.classList.contains('DA-actions-visible')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            showBlockActions($(block));
+        }, { capture: true });
         $(document).on('click', '.DA-img-block .DA-block-content img', function(e) {
             e.stopPropagation();
             const $block = $(this).closest('.DA-interactive-block');
             const wasVisible = $block.hasClass('DA-actions-visible');
-            
+
             // Clear existing timeout if any
             if (autoHideTimeout) {
                 clearTimeout(autoHideTimeout);

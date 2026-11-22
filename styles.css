@@ -1677,6 +1677,34 @@ body.DA-no-select {
     transform: none !important;
 }
 
+/* Newer sillyimages forks: <span class="iig-img-host"> holds the img plus their own
+   Download/Regenerate corner buttons. Keep it positioned so those buttons stay on the
+   image, and block-level to avoid the inline-block baseline gap. */
+.mes_text .DA-interactive-block .DA-block-content .iig-img-host,
+.DA-interactive-block .DA-block-content .iig-img-host {
+    display: block !important;
+    position: relative !important;
+    width: fit-content !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    line-height: 0 !important;
+}
+
+/* Our block content uses font-size:0 against strut gaps; the fork sizes its icons in em,
+   so restore a real size or its buttons render as empty squares. */
+.DA-interactive-block .DA-block-content .iig-img-actions {
+    font-size: var(--mainFontSize, 15px) !important;
+    line-height: normal !important;
+}
+
+/* The fork's buttons sit top-right; move ours below them when we share that corner. */
+body:not(.iig-actions-hidden) .DA-interactive-block.DA-pos-top-right:has(.iig-img-actions) .DA-block-actions {
+    top: 50px !important;
+}
+body:not(.iig-actions-hidden) .DA-interactive-block.DA-pos-top-center:has(.iig-img-actions) .DA-block-actions {
+    top: 50px !important;
+}
+
 .DA-interactive-block .DA-block-actions {
     position: absolute !important;
     display: flex !important;
